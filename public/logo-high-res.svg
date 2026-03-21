@@ -1,0 +1,17 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Filled background to ensure NO transparent edges on iOS -->
+  <rect width="512" height="512" fill="#0f172a"/>
+  
+  <!-- Stylized CineLog Icon -->
+  <path d="M160 180L352 180L384 120H128L160 180Z" fill="#22c55e" fill-opacity="0.8"/>
+  <rect x="128" y="180" width="256" height="192" rx="16" fill="#22c55e"/>
+  
+  <!-- Clapperboard stripes -->
+  <path d="M175 120L205 180" stroke="#0f172a" stroke-width="12" stroke-linecap="round"/>
+  <path d="M241 120L271 180" stroke="#0f172a" stroke-width="12" stroke-linecap="round"/>
+  <path d="M307 120L337 180" stroke="#0f172a" stroke-width="12" stroke-linecap="round"/>
+  
+  <!-- Play Button Overlay (Glassmorphism style attempt in SVG) -->
+  <circle cx="256" cy="276" r="48" fill="white" fill-opacity="0.2"/>
+  <path d="M240 256L284 276L240 296V256Z" fill="white"/>
+</svg>
