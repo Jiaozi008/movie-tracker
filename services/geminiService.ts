@@ -1,6 +1,6 @@
 import { Movie, GeminiMovieResponse } from "../types";
 
-const PROXY_URL = 'http://localhost:3001/api/gemini';
+const PROXY_URL = import.meta.env.VITE_API_PROXY || '/api/gemini';
 
 async function fetchFromProxy(payload: any) {
   const res = await fetch(PROXY_URL, {
