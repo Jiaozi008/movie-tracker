@@ -94,12 +94,25 @@ export const MovieForm: React.FC<MovieFormProps> = ({ initialData, existingMovie
   const getRecommendedIteration = (movieTitle: string) => {
     if (!movieTitle.trim()) return '1';
     const norm = normalizeTitle(movieTitle);
+    
+    // 计算历史已完结的记录数量
     const watchedCount = existingMovies.filter(m => 
       normalizeTitle(m.title) === norm && 
       m.status === MovieStatus.WATCHED &&
       m.id !== initialData?.id
     ).length;
-    return (watchedCount + 1).toString();
+
+    // 获取历史记录中的最大刷数
+    const maxIteration = existingMovies.reduce((max, m) => {
+      if (normalizeTitle(m.title) === norm && m.id !== initialData?.id) {
+        return Math.max(max, m.watchIteration || 1);
+      }
+      return max;
+    }, 0);
+
+    // 取两者最大值加 1 作为推荐的观影轮次
+    const recommended = Math.max(watchedCount, maxIteration) + 1;
+    return recommended.toString();
   };
 
   const handleTmdbSelect = async (detail: TmdbDetailResult, posterBase64: string | null) => {
