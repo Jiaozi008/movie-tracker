@@ -6,6 +6,17 @@ import { Trash2, Edit2, Calendar, Tv, Film, Check, ChevronDown, ChevronUp, User,
 import { ShareCard } from './ShareCard';
 import { normalizeTitle } from '../utils/titleNormalizer';
 
+const safeFormatDate = (timestamp: any): string => {
+    if (!timestamp) return '未知时间';
+    const date = new Date(timestamp);
+    if (isNaN(date.getTime())) return '未知时间';
+    try {
+        return date.toLocaleDateString('zh-CN');
+    } catch {
+        return '未知时间';
+    }
+};
+
 interface MovieCardProps {
     movie: Movie;
     allMovies?: Movie[];
@@ -322,7 +333,7 @@ export const MovieCard: React.FC<MovieCardProps> = ({
                                                         <span className={`font-bold ${isCurrent ? 'text-indigo-400' : 'text-slate-300'}`}>
                                                             第 {r.watchIteration || 1} 刷 {isCurrent && <span className="text-[9px] bg-indigo-600 text-white px-1 rounded-sm ml-1 font-normal">当前</span>}
                                                         </span>
-                                                        <span className="text-slate-500 text-[9px]">{new Date(r.addedAt).toLocaleDateString('zh-CN')}</span>
+                                                        <span className="text-slate-500 text-[9px]">{safeFormatDate(r.addedAt)}</span>
                                                     </div>
                                                     <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-slate-400 mb-1">
                                                         {r.rating > 0 && <span className="text-yellow-500 font-medium">★ {r.rating}</span>}
@@ -354,7 +365,7 @@ export const MovieCard: React.FC<MovieCardProps> = ({
                 <div className="pt-3 border-t border-slate-700/50 flex justify-between items-center text-xs text-slate-500 mt-auto">
                     <div className="flex items-center gap-1 group-hover:text-slate-400 transition-colors">
                         <Calendar size={12} />
-                        <span>{new Date(movie.addedAt).toLocaleDateString('zh-CN')}</span>
+                        <span>{safeFormatDate(movie.addedAt)}</span>
                     </div>
 
                     {!isSelectionMode && (

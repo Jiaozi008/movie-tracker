@@ -11,6 +11,24 @@ export interface UseMoviesCallbacks {
   onInfo?: (msg: string) => void;
 }
 
+const isValidMovie = (movie: any): movie is Movie => {
+  return (
+    movie &&
+    typeof movie === 'object' &&
+    typeof movie.id === 'string' &&
+    typeof movie.title === 'string' &&
+    (typeof movie.year === 'string' || typeof movie.year === 'number') &&
+    typeof movie.genre === 'string' &&
+    typeof movie.rating === 'number' &&
+    typeof movie.status === 'string' &&
+    typeof movie.review === 'string' &&
+    typeof movie.posterColor === 'string' &&
+    typeof movie.addedAt === 'number' &&
+    typeof movie.lastUpdated === 'number' &&
+    (movie.mediaType === 'movie' || movie.mediaType === 'tv')
+  );
+};
+
 export const useMovies = (callbacks?: UseMoviesCallbacks) => {
   const [movies, setMovies] = useState<Movie[]>(() => {
     try {
@@ -91,13 +109,24 @@ export const useMovies = (callbacks?: UseMoviesCallbacks) => {
   }, [callbacks]);
 
   const importMovies = useCallback((newMovies: Movie[]) => {
-    const { migrated } = migrateAllMovieStatuses(newMovies);
+    if (!Array.isArray(newMovies)) {
+      callbacks?.onError?.('导入的数据格式错误：期望是一个记录列表。');
+      return;
+    }
+
+    const validMovies = newMovies.filter(isValidMovie);
+    if (validMovies.length === 0 && newMovies.length > 0) {
+      callbacks?.onError?.('未找到任何有效的电影记录，已取消导入。');
+      return;
+    }
+
+    const { migrated } = migrateAllMovieStatuses(validMovies);
     const currentIds = new Set(movies.map(m => String(m.id)));
     const uniqueNewMovies = migrated.filter(m => !currentIds.has(String(m.id)));
 
     if (uniqueNewMovies.length > 0) {
       setMovies(prev => [...uniqueNewMovies, ...prev]);
-      callbacks?.onSuccess?.(`成功导入 ${uniqueNewMovies.length} 条新记录。${newMovies.length - uniqueNewMovies.length} 条重复记录已跳过。`);
+      callbacks?.onSuccess?.(`成功导入 ${uniqueNewMovies.length} 条新记录。${newMovies.length - uniqueNewMovies.length} 条重复或损坏记录已跳过。`);
     } else {
       callbacks?.onInfo?.('没有发现新记录（所有记录已存在）。');
     }
