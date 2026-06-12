@@ -1,4 +1,5 @@
 
+import LZString from 'lz-string';
 import { Movie } from "../types";
 
 const GIST_FILENAME = "cinelog_backup.json";
@@ -100,9 +101,47 @@ export const downloadBackupGist = async (token: string, gistId: string): Promise
     const file = gist.files[GIST_FILENAME];
     if (!file || !file.raw_url) throw new Error("备份文件已损坏或丢失");
 
-    // Fetch the raw content
     const contentRes = await fetch(file.raw_url);
     if (!contentRes.ok) throw new Error("下载备份内容失败");
     
-    return await contentRes.json();
+    const rawText = await contentRes.text();
+    if (!rawText || rawText.trim() === '') {
+        return [];
+    }
+
+    // 1. 尝试直接作为明文 JSON 解析
+    try {
+        const parsed = JSON.parse(rawText);
+        if (Array.isArray(parsed)) {
+            return parsed;
+        }
+        
+        // 若解析结果是字符串字面量，尝试将其解压后再解析
+        if (typeof parsed === 'string') {
+            const decompressed = LZString.decompressFromBase64(parsed);
+            if (decompressed) {
+                const parsedDecompressed = JSON.parse(decompressed);
+                if (Array.isArray(parsedDecompressed)) {
+                    return parsedDecompressed;
+                }
+            }
+        }
+    } catch {
+        // 解析 JSON 失败，可能为密文，进入解压步骤
+    }
+
+    // 2. 尝试使用 LZString 解压密文并解析
+    try {
+        const decompressed = LZString.decompressFromBase64(rawText);
+        if (decompressed) {
+            const parsed = JSON.parse(decompressed);
+            if (Array.isArray(parsed)) {
+                return parsed;
+            }
+        }
+    } catch (e) {
+        console.error("LZString decompression failed", e);
+    }
+
+    throw new Error("下载成功但数据解析失败，文件格式不符合预期");
 };
