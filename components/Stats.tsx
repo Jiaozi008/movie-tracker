@@ -73,7 +73,9 @@ export const Stats: React.FC<StatsProps> = ({ movies }) => {
         statusData,
         ratingData,
         trendData,
-        genreData
+        genreData,
+        rewatchRate,
+        rewatchKing
     } = useMemo(() => {
         // Create an array of unique media entities for aggregate statistics (Genres, Status, etc.)
         // This ensures TV shows with multiple episode records don't skew distribution data
