@@ -21,6 +21,7 @@ export interface MovieFormState {
     customSpeed: string;
     platform: string;
     cast: string;
+    watchIteration: string;
 }
 
 type FormAction =
@@ -48,6 +49,7 @@ const defaultState: MovieFormState = {
     customSpeed: '1.5',
     platform: '',
     cast: '',
+    watchIteration: '1',
 };
 
 function formReducer(state: MovieFormState, action: FormAction): MovieFormState {
@@ -112,6 +114,7 @@ function buildInitialState(initialData: Movie | null | undefined): MovieFormStat
         watchedDate,
         platform: initialData.platform || '',
         cast: initialData.cast || '',
+        watchIteration: initialData.watchIteration ? initialData.watchIteration.toString() : '1',
     };
 }
 

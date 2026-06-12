@@ -91,6 +91,17 @@ export const MovieForm: React.FC<MovieFormProps> = ({ initialData, existingMovie
     return habits;
   };
 
+  const getRecommendedIteration = (movieTitle: string) => {
+    if (!movieTitle.trim()) return '1';
+    const norm = normalizeTitle(movieTitle);
+    const watchedCount = existingMovies.filter(m => 
+      normalizeTitle(m.title) === norm && 
+      m.status === MovieStatus.WATCHED &&
+      m.id !== initialData?.id
+    ).length;
+    return (watchedCount + 1).toString();
+  };
+
   const handleTmdbSelect = async (detail: TmdbDetailResult, posterBase64: string | null) => {
     const cleanGenre = (g: string) => g ? g.split(/[, ，]\s*/).filter(tag => tag !== '剧情' && tag !== 'Drama').join(', ') : '';
 
@@ -105,6 +116,7 @@ export const MovieForm: React.FC<MovieFormProps> = ({ initialData, existingMovie
       mediaType: detail.mediaType,
       duration: detail.duration ? detail.duration.toString() : '',
       platform: detail.platform || '',
+      watchIteration: getRecommendedIteration(detail.title),
       ...(detail.totalEpisodes ? { totalEpisodes: detail.totalEpisodes.toString() } : {}),
       ...(posterBase64 ? { posterImage: posterBase64 } : (detail.posterUrl ? { posterImage: detail.posterUrl } : {})),
       ...getInheritedHabits(detail.title, detail.mediaType || 'movie'),
@@ -167,6 +179,7 @@ export const MovieForm: React.FC<MovieFormProps> = ({ initialData, existingMovie
         mediaType: data.mediaType,
         ...(data.duration ? { duration: data.duration.toString() } : {}),
         ...(data.totalEpisodes ? { totalEpisodes: data.totalEpisodes.toString() } : {}),
+        watchIteration: getRecommendedIteration(data.title),
         ...getInheritedHabits(data.title, data.mediaType || 'movie'),
       });
     },
@@ -189,6 +202,7 @@ export const MovieForm: React.FC<MovieFormProps> = ({ initialData, existingMovie
       posterColor: suggestion.posterColor,
       posterImage: suggestion.posterImage || '',
       duration: suggestion.duration ? suggestion.duration.toString() : '',
+      watchIteration: getRecommendedIteration(suggestion.title),
       ...habits,
     };
 
@@ -231,6 +245,16 @@ export const MovieForm: React.FC<MovieFormProps> = ({ initialData, existingMovie
       actualWatchTime = Math.round(durationNum / actualSpeed);
     }
 
+    // 电视剧集满自动将"追剧中"升级为"完结"
+    let finalStatus = state.status;
+    if (state.mediaType === 'tv') {
+      const ep = parseInt(state.currentEpisode) || 0;
+      const total = parseInt(state.totalEpisodes) || 0;
+      if (total > 0 && ep >= total && finalStatus === MovieStatus.WATCHING) {
+        finalStatus = MovieStatus.WATCHED;
+      }
+    }
+
     const addedAtTimestamp = state.watchedDate ? new Date(state.watchedDate).getTime() : Date.now();
 
     onSubmit({
@@ -241,7 +265,7 @@ export const MovieForm: React.FC<MovieFormProps> = ({ initialData, existingMovie
       genre: state.genre,
       director: state.director,
       rating: state.rating,
-      status: state.status,
+      status: finalStatus,
       review: state.review,
       posterColor: state.posterColor,
       posterImage: state.posterImage,
@@ -254,6 +278,7 @@ export const MovieForm: React.FC<MovieFormProps> = ({ initialData, existingMovie
       addedAt: addedAtTimestamp,
       platform: state.platform,
       cast: state.cast || undefined,
+      watchIteration: parseInt(state.watchIteration) || 1,
     });
   };
 
@@ -329,6 +354,8 @@ export const MovieForm: React.FC<MovieFormProps> = ({ initialData, existingMovie
                           .find(m => normalizeTitle(m.title) === normTitle);
                         if (exactMatch) {
                           handleSelectSuggestion(exactMatch);
+                        } else {
+                          setField('watchIteration', getRecommendedIteration(state.title));
                         }
                       }
                     }
@@ -603,8 +630,8 @@ export const MovieForm: React.FC<MovieFormProps> = ({ initialData, existingMovie
             </p>
           </div>
 
-          {/* Status & Rating */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {/* Status, Iteration & Rating */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div className="space-y-2">
               <label className="text-sm font-medium text-slate-300">状态</label>
               <select
@@ -617,7 +644,45 @@ export const MovieForm: React.FC<MovieFormProps> = ({ initialData, existingMovie
                 ))}
               </select>
             </div>
-            <div className="space-y-2 flex flex-col justify-center py-2 sm:py-0">
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-slate-300">观影轮次 (重温)</label>
+              <div className="flex items-center bg-slate-800 border border-slate-700 rounded-lg h-[46px] sm:h-[38px] overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const cur = parseInt(state.watchIteration) || 1;
+                    if (cur > 1) setField('watchIteration', (cur - 1).toString());
+                  }}
+                  className="px-3 h-full text-slate-400 hover:text-white hover:bg-slate-700 active:bg-slate-600 transition-colors"
+                >
+                  -
+                </button>
+                <input
+                  type="number"
+                  min="1"
+                  value={state.watchIteration}
+                  onChange={(e) => setField('watchIteration', e.target.value)}
+                  onBlur={() => {
+                    const cur = parseInt(state.watchIteration) || 1;
+                    setField('watchIteration', Math.max(1, cur).toString());
+                  }}
+                  className="w-full bg-transparent border-0 text-center text-white focus:ring-0 outline-none text-base sm:text-sm [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    const cur = parseInt(state.watchIteration) || 1;
+                    setField('watchIteration', (cur + 1).toString());
+                  }}
+                  className="px-3 h-full text-slate-400 hover:text-white hover:bg-slate-700 active:bg-slate-600 transition-colors"
+                >
+                  +
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-2 flex flex-col justify-end py-2 sm:py-0">
               <label className="text-sm font-medium text-slate-300 mb-2 sm:mb-1">评分</label>
               <div className="flex justify-center sm:justify-start">
                 <StarRating rating={state.rating} onRatingChange={(r) => setField('rating', r)} size={32} />

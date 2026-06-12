@@ -1,12 +1,14 @@
 
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Movie, MovieStatus } from '../types';
 import { StarRating } from './StarRating';
 import { Trash2, Edit2, Calendar, Tv, Film, Check, ChevronDown, ChevronUp, User, Users, Tag, Trophy, Clock, Monitor, Share2 } from 'lucide-react';
 import { ShareCard } from './ShareCard';
+import { normalizeTitle } from '../utils/titleNormalizer';
 
 interface MovieCardProps {
     movie: Movie;
+    allMovies?: Movie[];
     onEdit: (movie: Movie) => void;
     onDelete: (id: string) => void;
     isSelectionMode?: boolean;
@@ -17,6 +19,7 @@ interface MovieCardProps {
 
 export const MovieCard: React.FC<MovieCardProps> = ({
     movie,
+    allMovies = [],
     onEdit,
     onDelete,
     isSelectionMode = false,
@@ -26,6 +29,14 @@ export const MovieCard: React.FC<MovieCardProps> = ({
 }) => {
     const [isExpanded, setIsExpanded] = useState(false);
     const [showShareCard, setShowShareCard] = useState(false);
+
+    const rewatchRecords = useMemo(() => {
+        if (!allMovies || allMovies.length === 0 || !movie.title) return [];
+        const norm = normalizeTitle(movie.title);
+        return allMovies
+            .filter(m => normalizeTitle(m.title) === norm && (m.mediaType || 'movie') === (movie.mediaType || 'movie'))
+            .sort((a, b) => (a.watchIteration || 1) - (b.watchIteration || 1));
+    }, [allMovies, movie.title, movie.mediaType]);
 
     // Status Badge Colors (Existing)
     const statusColors = {
@@ -119,15 +130,20 @@ export const MovieCard: React.FC<MovieCardProps> = ({
                     </span>
                 </div>
 
-                {/* Platform Badge */}
-                {movie.platform && (
-                    <div className="absolute top-3 right-3 z-10">
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[9px] font-bold bg-black/40 text-slate-200 border border-white/10 backdrop-blur-md uppercase tracking-tighter">
+                {/* Top Right Badges */}
+                <div className="absolute top-3 right-3 z-10 flex flex-col items-end gap-1.5">
+                    {movie.platform && (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[9px] font-bold bg-black/40 text-slate-200 border border-white/10 backdrop-blur-md uppercase tracking-tighter shadow-sm">
                             <Monitor size={10} />
                             {movie.platform}
                         </span>
-                    </div>
-                )}
+                    )}
+                    {movie.watchIteration && movie.watchIteration > 1 && (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md text-[9px] font-extrabold bg-gradient-to-r from-amber-500 to-orange-500 text-white border border-orange-400/20 shadow-md uppercase tracking-tight">
+                            ⚡ {movie.watchIteration} 刷
+                        </span>
+                    )}
+                </div>
 
                 {/* Selection Checkbox Overlay */}
                 {isSelectionMode && (
@@ -147,37 +163,37 @@ export const MovieCard: React.FC<MovieCardProps> = ({
                     </div>
                 </div>
 
-                {/* Action Buttons */}
+                {/* Action Buttons - Mobile: in content area, Desktop: overlay on hover */}
                 {!isSelectionMode && (
-                    <div className="absolute top-2 right-2 flex gap-2 z-20">
-                        <button
-                            onClick={(e) => { e.stopPropagation(); setShowShareCard(true); }}
-                            className="p-1.5 bg-slate-900/80 rounded-full text-slate-300 hover:text-white hover:bg-indigo-600 backdrop-blur-sm border border-white/10 shadow-lg transition-all duration-300 
-                opacity-100 transform translate-x-0 
-                sm:opacity-0 sm:translate-x-8 sm:group-hover:translate-x-0 sm:group-hover:opacity-100 sm:delay-[25ms]"
-                            title="生成分享海报"
-                        >
-                            <Share2 size={14} />
-                        </button>
-                        <button
-                            onClick={(e) => { e.stopPropagation(); onEdit(movie); }}
-                            className="p-1.5 bg-slate-900/80 rounded-full text-slate-300 hover:text-white hover:bg-indigo-600 backdrop-blur-sm border border-white/10 shadow-lg transition-all duration-300 
-                opacity-100 transform translate-x-0 
-                sm:opacity-0 sm:translate-x-8 sm:group-hover:translate-x-0 sm:group-hover:opacity-100 sm:delay-75"
-                            title="编辑"
-                        >
-                            <Edit2 size={14} />
-                        </button>
-                        <button
-                            onClick={(e) => { e.stopPropagation(); onDelete(movie.id); }}
-                            className="p-1.5 bg-red-900/80 rounded-full text-red-300 hover:text-white hover:bg-red-600 backdrop-blur-sm border border-white/10 shadow-lg transition-all duration-300 
-                opacity-100 transform translate-x-0 
-                sm:opacity-0 sm:translate-x-8 sm:group-hover:translate-x-0 sm:group-hover:opacity-100 sm:delay-100"
-                            title="删除"
-                        >
-                            <Trash2 size={14} />
-                        </button>
-                    </div>
+                    <>
+                        {/* Desktop: overlay buttons in header (hidden by default, show on hover) */}
+                        <div className="absolute top-2 right-2 gap-2 z-20 hidden sm:flex">
+                            <button
+                                onClick={(e) => { e.stopPropagation(); setShowShareCard(true); }}
+                                className="p-1.5 bg-slate-900/80 rounded-full text-slate-300 hover:text-white hover:bg-indigo-600 backdrop-blur-sm border border-white/10 shadow-lg transition-all duration-300 
+                    sm:opacity-0 sm:translate-x-8 sm:group-hover:translate-x-0 sm:group-hover:opacity-100 sm:delay-[25ms]"
+                                title="生成分享海报"
+                            >
+                                <Share2 size={14} />
+                            </button>
+                            <button
+                                onClick={(e) => { e.stopPropagation(); onEdit(movie); }}
+                                className="p-1.5 bg-slate-900/80 rounded-full text-slate-300 hover:text-white hover:bg-indigo-600 backdrop-blur-sm border border-white/10 shadow-lg transition-all duration-300 
+                    sm:opacity-0 sm:translate-x-8 sm:group-hover:translate-x-0 sm:group-hover:opacity-100 sm:delay-75"
+                                title="编辑"
+                            >
+                                <Edit2 size={14} />
+                            </button>
+                            <button
+                                onClick={(e) => { e.stopPropagation(); onDelete(movie.id); }}
+                                className="p-1.5 bg-red-900/80 rounded-full text-red-300 hover:text-white hover:bg-red-600 backdrop-blur-sm border border-white/10 shadow-lg transition-all duration-300 
+                    sm:opacity-0 sm:translate-x-8 sm:group-hover:translate-x-0 sm:group-hover:opacity-100 sm:delay-100"
+                                title="删除"
+                            >
+                                <Trash2 size={14} />
+                            </button>
+                        </div>
+                    </>
                 )}
             </div>
 
@@ -205,6 +221,33 @@ export const MovieCard: React.FC<MovieCardProps> = ({
                     </div>
                 </div>
 
+                {/* Mobile action buttons (hidden on sm+) */}
+                {!isSelectionMode && (
+                    <div className="flex sm:hidden items-center gap-2 mb-3">
+                        <button
+                            onClick={(e) => { e.stopPropagation(); setShowShareCard(true); }}
+                            className="p-1.5 bg-slate-700/80 rounded-full text-slate-300 hover:text-white hover:bg-indigo-600 transition-colors"
+                            title="生成分享海报"
+                        >
+                            <Share2 size={14} />
+                        </button>
+                        <button
+                            onClick={(e) => { e.stopPropagation(); onEdit(movie); }}
+                            className="p-1.5 bg-slate-700/80 rounded-full text-slate-300 hover:text-white hover:bg-indigo-600 transition-colors"
+                            title="编辑"
+                        >
+                            <Edit2 size={14} />
+                        </button>
+                        <button
+                            onClick={(e) => { e.stopPropagation(); onDelete(movie.id); }}
+                            className="p-1.5 bg-red-900/60 rounded-full text-red-300 hover:text-white hover:bg-red-600 transition-colors"
+                            title="删除"
+                        >
+                            <Trash2 size={14} />
+                        </button>
+                    </div>
+                )}
+
                 {/* Episode Progress for TV */}
                 {isTv && (
                     <div className="mb-3 group/progress">
@@ -222,8 +265,8 @@ export const MovieCard: React.FC<MovieCardProps> = ({
                 )}
 
                 {/* Expandable Details Section */}
-                <div className={`transition-all duration-300 ease-in-out overflow-hidden ${isExpanded ? 'max-h-60 opacity-100 mb-3' : 'max-h-0 opacity-0'}`}>
-                    <div className="space-y-2 text-xs text-slate-300 bg-slate-900/50 p-2 rounded-lg border border-slate-700/50">
+                <div className={`transition-all duration-300 ease-in-out overflow-hidden ${isExpanded ? 'max-h-[500px] opacity-100 mb-3' : 'max-h-0 opacity-0'}`}>
+                    <div className="space-y-2 text-xs text-slate-300 bg-slate-900/50 p-2 rounded-lg border border-slate-700/50 max-h-[400px] overflow-y-auto custom-scrollbar">
                         {movie.director && (
                             <div className="flex items-center gap-2">
                                 <User size={12} className="text-slate-500" />
@@ -257,6 +300,43 @@ export const MovieCard: React.FC<MovieCardProps> = ({
                         {movie.review && (
                             <div className="pt-1 border-t border-slate-700/50 mt-1">
                                 <p className="italic">"{movie.review}"</p>
+                            </div>
+                        )}
+
+                        {/* 重温足迹微缩时间轴 */}
+                        {rewatchRecords.length > 1 && (
+                            <div className="mt-3 pt-3 border-t border-slate-700/50">
+                                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                                    <Clock size={11} className="text-amber-500" /> 重温足迹 ({rewatchRecords.length} 刷)
+                                </div>
+                                <div className="relative border-l border-slate-700 pl-3 ml-1.5 space-y-3 mt-2">
+                                    {rewatchRecords.map(r => {
+                                        const isCurrent = r.id === movie.id;
+                                        return (
+                                            <div key={r.id} className="relative group/timeline-item">
+                                                {/* Timeline Node dot */}
+                                                <div className={`absolute -left-[16.5px] top-1.5 w-2.5 h-2.5 rounded-full border transition-all ${isCurrent ? 'bg-indigo-500 border-indigo-300 ring-2 ring-indigo-500/30' : 'bg-slate-800 border-slate-600'}`} />
+
+                                                <div className={`p-2 rounded-lg text-[11px] transition-all ${isCurrent ? 'bg-indigo-600/10 border border-indigo-500/20' : 'bg-slate-900/30 border border-slate-800/80'}`}>
+                                                    <div className="flex justify-between items-center mb-1">
+                                                        <span className={`font-bold ${isCurrent ? 'text-indigo-400' : 'text-slate-300'}`}>
+                                                            第 {r.watchIteration || 1} 刷 {isCurrent && <span className="text-[9px] bg-indigo-600 text-white px-1 rounded-sm ml-1 font-normal">当前</span>}
+                                                        </span>
+                                                        <span className="text-slate-500 text-[9px]">{new Date(r.addedAt).toLocaleDateString('zh-CN')}</span>
+                                                    </div>
+                                                    <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-slate-400 mb-1">
+                                                        {r.rating > 0 && <span className="text-yellow-500 font-medium">★ {r.rating}</span>}
+                                                        {r.playbackSpeed && r.playbackSpeed !== 1 && <span className="text-slate-500">⚡ {r.playbackSpeed}x</span>}
+                                                        {r.platform && <span className="text-slate-500">📺 {r.platform}</span>}
+                                                    </div>
+                                                    {r.review && (
+                                                        <p className="text-slate-400 italic mt-0.5 leading-relaxed">"{r.review}"</p>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
                             </div>
                         )}
                     </div>

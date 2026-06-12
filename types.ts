@@ -1,9 +1,9 @@
 
 export enum MovieStatus {
-  WATCHED = '已看',
+  WATCHED = '完结',
   PLANNING = '想看',
   DROPPED = '弃坑',
-  WATCHING = '在看',
+  WATCHING = '追剧中',
 }
 
 export type MediaType = 'movie' | 'tv';
@@ -36,6 +36,7 @@ export interface Movie {
   actualWatchTime?: number; // Calculated: duration / speed (or episodes * duration / speed for TV)
   platform?: string; // New field for streaming platform
   cast?: string; // Main cast members, comma-separated
+  watchIteration?: number; // 观看轮次（第几刷）
 }
 
 export interface MovieStats {

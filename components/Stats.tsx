@@ -128,11 +128,11 @@ export const Stats: React.FC<StatsProps> = ({ movies }) => {
         const ratedCount = uniqueMediaEntities.filter(m => m.rating > 0).length;
         const avgRating = ratedCount > 0 ? (totalRating / ratedCount).toFixed(1) : '0';
 
-        // Movie Count
-        const movieCount = filteredMovies.filter(m => (!m.mediaType || m.mediaType === 'movie')).length;
+        // Movie Count (排除"想看"条目)
+        const movieCount = filteredMovies.filter(m => (!m.mediaType || m.mediaType === 'movie') && m.status !== MovieStatus.PLANNING).length;
 
-        // TV Logic
-        const tvEntries = filteredMovies.filter(m => m.mediaType === 'tv');
+        // TV Logic (排除"想看"条目)
+        const tvEntries = filteredMovies.filter(m => m.mediaType === 'tv' && m.status !== MovieStatus.PLANNING);
 
         // Deduplicate TV shows by title for the count
         const uniqueTvTitles = new Set(tvEntries.map(m => normalizeTitle(m.title)));
@@ -142,11 +142,11 @@ export const Stats: React.FC<StatsProps> = ({ movies }) => {
         // Movie Duration
         const movieDuration = calculateMovieDuration(filteredMovies);
 
-        // TV Episodes watched count (deduplicated by utility)
-        const totalEpisodesWatched = calculateTotalEpisodes(filteredMovies);
+        // TV Episodes watched count (deduplicated by utility with global context)
+        const totalEpisodesWatched = calculateTotalEpisodes(filteredMovies, movies);
 
-        // TV Duration (calculated by utility with dedup logic)
-        const tvDuration = calculateTvDuration(filteredMovies);
+        // TV Duration (calculated by utility with dedup logic and global context)
+        const tvDuration = calculateTvDuration(filteredMovies, movies);
 
         // Total Duration formatting
         const totalMinutes = movieDuration + tvDuration;
@@ -165,7 +165,7 @@ export const Stats: React.FC<StatsProps> = ({ movies }) => {
             for (let i = 1; i <= daysInMonth; i++) {
                 trendMap.set(i.toString(), 0);
             }
-            filteredMovies.forEach(mov => {
+            filteredMovies.filter(mov => mov.status !== MovieStatus.PLANNING).forEach(mov => {
                 const d = new Date(mov.addedAt);
                 trendMap.set(d.getDate().toString(), (trendMap.get(d.getDate().toString()) || 0) + 1);
             });
@@ -173,14 +173,14 @@ export const Stats: React.FC<StatsProps> = ({ movies }) => {
         } else if (timeFrame === 'year') {
             // Monthly trend
             for (let i = 1; i <= 12; i++) trendMap.set(i.toString(), 0);
-            filteredMovies.forEach(mov => {
+            filteredMovies.filter(mov => mov.status !== MovieStatus.PLANNING).forEach(mov => {
                 const d = new Date(mov.addedAt);
                 trendMap.set((d.getMonth() + 1).toString(), (trendMap.get((d.getMonth() + 1).toString()) || 0) + 1);
             });
             trendFormat = Array.from(trendMap.keys()).map(k => ({ label: `${k}月`, key: k }));
         } else {
             // Yearly trend
-            filteredMovies.forEach(mov => {
+            filteredMovies.filter(mov => mov.status !== MovieStatus.PLANNING).forEach(mov => {
                 const y = new Date(mov.addedAt).getFullYear().toString();
                 trendMap.set(y, (trendMap.get(y) || 0) + 1);
             });
@@ -213,12 +213,49 @@ export const Stats: React.FC<StatsProps> = ({ movies }) => {
             .sort((a, b) => b.value - a.value)
             .slice(0, 8); // Top 8 genres
 
+        // 4. 重温指标计算
+        // 独特已观影作品列表 (排除想看)
+        const uniqueWatchedEntities = uniqueMediaEntities.filter(m => m.status !== MovieStatus.PLANNING);
+        const uniqueWatchedTotal = uniqueWatchedEntities.length;
+
+        const rewatchMap = new Map<string, number>();
+        movies.forEach(m => {
+            if (m.status === MovieStatus.PLANNING) return;
+            const key = `${normalizeTitle(m.title)}-${m.mediaType || 'movie'}`;
+            const iteration = m.watchIteration || 1;
+            const existing = rewatchMap.get(key) || 0;
+            if (iteration > existing) {
+                rewatchMap.set(key, iteration);
+            }
+        });
+
+        // 重温过的影片数 (最大刷数 > 1)
+        const rewatchedEntitiesCount = Array.from(rewatchMap.values()).filter(v => v > 1).length;
+        const rewatchRate = uniqueWatchedTotal > 0 
+            ? ((rewatchedEntitiesCount / uniqueWatchedTotal) * 100).toFixed(1) 
+            : '0.0';
+
+        // 重温之王
+        const rewatchList = Array.from(rewatchMap.entries())
+            .map(([key, maxIteration]) => {
+                const parts = key.split('-');
+                const mediaType = parts.pop() || 'movie';
+                const normTitle = parts.join('-');
+                const originalTitle = movies.find(m => normalizeTitle(m.title) === normTitle && (m.mediaType || 'movie') === mediaType)?.title || normTitle;
+                return { title: originalTitle, iteration: maxIteration };
+            })
+            .filter(item => item.iteration > 1)
+            .sort((a, b) => b.iteration - a.iteration);
+
+        const rewatchKing = rewatchList[0] || null;
+
         return {
             total, movieCount, tvCount, totalEpisodesWatched,
             movieDuration, tvDuration, totalDurationFormatted, avgRating,
-            statusData, ratingData, trendData, genreData
+            statusData, ratingData, trendData, genreData,
+            rewatchRate, rewatchKing
         };
-    }, [filteredMovies, timeFrame, selectedMonth, selectedYear]);
+    }, [filteredMovies, movies, timeFrame, selectedMonth, selectedYear]);
 
     const CHART_COLORS = [
         '#6366f1', '#10b981', '#f59e0b', '#ec4899', '#3b82f6', '#8b5cf6',
@@ -283,7 +320,7 @@ export const Stats: React.FC<StatsProps> = ({ movies }) => {
             </div>
 
             {/* 2. Key Metrics Cards */}
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 sm:gap-4">
                 <div className="bg-slate-800 p-3 sm:p-4 rounded-xl border border-slate-700 flex flex-col items-center justify-center relative overflow-hidden group">
                     <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/10 to-transparent" />
                     <div className="text-slate-400 text-xs mb-1 z-10 font-medium">总记录</div>
@@ -345,6 +382,31 @@ export const Stats: React.FC<StatsProps> = ({ movies }) => {
                     <div className="absolute inset-0 bg-gradient-to-br from-yellow-500/10 to-transparent" />
                     <div className="text-slate-400 text-xs mb-1 z-10 font-medium">平均评分</div>
                     <div className="text-2xl sm:text-3xl font-bold text-yellow-400 z-10">{avgRating} <span className="text-sm">★</span></div>
+                </div>
+
+                {/* 重温比例 */}
+                <div className="bg-slate-800 p-3 sm:p-4 rounded-xl border border-slate-700 flex flex-col items-center justify-center relative overflow-hidden">
+                    <div className="absolute inset-0 bg-gradient-to-br from-pink-500/10 to-transparent" />
+                    <div className="text-slate-400 text-xs mb-1 z-10 font-medium flex items-center gap-1"><Activity size={12} className="text-pink-400" /> 重温比例</div>
+                    <div className="text-2xl sm:text-3xl font-bold text-pink-400 z-10">{rewatchRate} <span className="text-sm text-pink-400/60">%</span></div>
+                </div>
+
+                {/* 重温之王 */}
+                <div className="bg-slate-800 p-3 sm:p-4 rounded-xl border border-slate-700 flex flex-col items-center justify-center relative overflow-hidden">
+                    <div className="absolute inset-0 bg-gradient-to-br from-orange-500/10 to-transparent" />
+                    <div className="text-slate-400 text-xs mb-1 z-10 font-medium flex items-center gap-1">👑 重温之王</div>
+                    <div className="text-center z-10 max-w-full px-1">
+                        {rewatchKing ? (
+                            <>
+                                <div className="text-sm font-bold text-orange-400 truncate w-32 sm:w-auto" title={rewatchKing.title}>
+                                    {rewatchKing.title}
+                                </div>
+                                <div className="text-[10px] text-slate-500 font-medium">重温 {rewatchKing.iteration} 遍</div>
+                            </>
+                        ) : (
+                            <div className="text-sm text-slate-500">暂无重温</div>
+                        )}
+                    </div>
                 </div>
             </div>
 

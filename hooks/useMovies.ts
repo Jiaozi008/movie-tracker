@@ -1,6 +1,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { Movie } from '../types';
+import { migrateAllMovieStatuses } from '../utils/migrationUtils';
 
 const STORAGE_KEY = 'cinelog_movies_v1';
 
@@ -14,7 +15,13 @@ export const useMovies = (callbacks?: UseMoviesCallbacks) => {
   const [movies, setMovies] = useState<Movie[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
-      return saved ? JSON.parse(saved) : [];
+      if (!saved) return [];
+      const raw: Movie[] = JSON.parse(saved);
+      const { migrated, didMigrate } = migrateAllMovieStatuses(raw);
+      if (didMigrate) {
+        setTimeout(() => localStorage.setItem(STORAGE_KEY, JSON.stringify(migrated)), 0);
+      }
+      return migrated;
     } catch (e) {
       console.error("Failed to load movies", e);
       return [];
@@ -84,8 +91,9 @@ export const useMovies = (callbacks?: UseMoviesCallbacks) => {
   }, [callbacks]);
 
   const importMovies = useCallback((newMovies: Movie[]) => {
+    const { migrated } = migrateAllMovieStatuses(newMovies);
     const currentIds = new Set(movies.map(m => String(m.id)));
-    const uniqueNewMovies = newMovies.filter(m => !currentIds.has(String(m.id)));
+    const uniqueNewMovies = migrated.filter(m => !currentIds.has(String(m.id)));
 
     if (uniqueNewMovies.length > 0) {
       setMovies(prev => [...uniqueNewMovies, ...prev]);

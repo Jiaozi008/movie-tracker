@@ -3,7 +3,7 @@
  * 提取自 Stats.tsx，用于单元测试
  */
 
-import { Movie } from '../types';
+import { Movie, MovieStatus } from '../types';
 import { normalizeTitle } from './titleNormalizer';
 
 export interface WatchTimeStats {
@@ -19,6 +19,8 @@ export interface WatchTimeStats {
  */
 export function calculateMovieDuration(movies: Movie[]): number {
     return movies.reduce((sum, m) => {
+        // 跳过"想看"条目 - 还没观看不产生时长
+        if (m.status === MovieStatus.PLANNING) return sum;
         if (!m.mediaType || m.mediaType === 'movie') {
             if (m.actualWatchTime !== undefined) {
                 return sum + m.actualWatchTime;
@@ -32,25 +34,32 @@ export function calculateMovieDuration(movies: Movie[]): number {
 /**
  * 计算电视剧的观影时长
  * 优先使用 actualWatchTime（已考虑倍速），否则按 集数 * 单集时长 回退
+ * 支持传入 allMovies 作为全局上下文以处理跨时间段统计增量
  */
-export function calculateTvDuration(movies: Movie[]): number {
-    const tvEntries = movies.filter(m => m.mediaType === 'tv');
+export function calculateTvDuration(movies: Movie[], allMovies?: Movie[]): number {
+    const contextMovies = allMovies || movies;
+    const tvEntries = contextMovies.filter(m => m.mediaType === 'tv' && m.status !== MovieStatus.PLANNING);
 
-    // Group by title to handle duplicate records for the same show
+    // Group by title and iteration to handle duplicate records and rewatches for the same show
     const tvGroups = new Map<string, Movie[]>();
     for (const m of tvEntries) {
-        const title = normalizeTitle(m.title);
-        if (!tvGroups.has(title)) {
-            tvGroups.set(title, []);
+        const key = `${normalizeTitle(m.title)}-iteration-${m.watchIteration || 1}`;
+        if (!tvGroups.has(key)) {
+            tvGroups.set(key, []);
         }
-        tvGroups.get(title)!.push(m);
+        tvGroups.get(key)!.push(m);
     }
 
     let totalDuration = 0;
+    const activeMovieIds = new Set(movies.map(m => m.id));
 
     for (const entries of tvGroups.values()) {
-        // Sort by episode number to calculate incremental progress
-        entries.sort((a, b) => (a.currentEpisode || 0) - (b.currentEpisode || 0));
+        // Sort by episode number and addedAt to calculate stable incremental progress
+        entries.sort((a, b) => {
+            const epDiff = (a.currentEpisode || 0) - (b.currentEpisode || 0);
+            if (epDiff !== 0) return epDiff;
+            return (a.addedAt || 0) - (b.addedAt || 0);
+        });
 
         let lastMaxEpisode = 0;
 
@@ -60,7 +69,9 @@ export function calculateTvDuration(movies: Movie[]): number {
             // Handle records with no episode number (Specials, Movies marked as TV, or miscellaneous)
             // Treat them as standalone additions and do not update progression state
             if (currentEp === 0) {
-                totalDuration += m.actualWatchTime !== undefined ? m.actualWatchTime : (m.duration || 0);
+                if (activeMovieIds.has(m.id)) {
+                    totalDuration += m.actualWatchTime !== undefined ? m.actualWatchTime : (m.duration || 0);
+                }
                 continue;
             }
 
@@ -68,21 +79,24 @@ export function calculateTvDuration(movies: Movie[]): number {
             const deltaEpisodes = Math.max(0, currentEp - lastMaxEpisode);
 
             if (deltaEpisodes > 0) {
-                let segmentDuration = 0;
+                // Only count the contribution if this specific record is in the active list (movies)
+                if (activeMovieIds.has(m.id)) {
+                    let segmentDuration = 0;
 
-                // Calculate duration contribution for the delta episodes
-                if (m.actualWatchTime !== undefined) {
-                    // actualWatchTime is typically cumulative for currentEpisode.
-                    // Derive average time per episode for this record
-                    const avgTimePerEp = currentEp > 0 ? (m.actualWatchTime / currentEp) : 0;
-                    segmentDuration = deltaEpisodes * avgTimePerEp;
-                } else {
-                    // Fallback using duration (assumes duration is per episode)
-                    const dur = m.duration || 0;
-                    segmentDuration = deltaEpisodes * dur;
+                    // Calculate duration contribution for the delta episodes
+                    if (m.actualWatchTime !== undefined) {
+                        // actualWatchTime is typically cumulative for currentEpisode.
+                        // Derive average time per episode for this record
+                        const avgTimePerEp = currentEp > 0 ? (m.actualWatchTime / currentEp) : 0;
+                        segmentDuration = deltaEpisodes * avgTimePerEp;
+                    } else {
+                        // Fallback using duration (assumes duration is per episode)
+                        const dur = m.duration || 0;
+                        segmentDuration = deltaEpisodes * dur;
+                    }
+
+                    totalDuration += segmentDuration;
                 }
-
-                totalDuration += segmentDuration;
                 lastMaxEpisode = currentEp;
             }
         }
@@ -92,30 +106,59 @@ export function calculateTvDuration(movies: Movie[]): number {
 }
 
 /**
- * 计算电视剧累计追剧集数（按剧名去重，取最大集数）
+ * 计算电视剧累计追剧集数（支持传入 allMovies 作为全局上下文以处理跨时间段统计增量）
  */
-export function calculateTotalEpisodes(movies: Movie[]): number {
-    const tvEntries = movies.filter(m => m.mediaType === 'tv');
-    const tvEpMap = new Map<string, number>();
+export function calculateTotalEpisodes(movies: Movie[], allMovies?: Movie[]): number {
+    const contextMovies = allMovies || movies;
+    const tvEntries = contextMovies.filter(m => m.mediaType === 'tv' && m.status !== MovieStatus.PLANNING);
 
-    tvEntries.forEach(m => {
-        const title = normalizeTitle(m.title);
-        const ep = m.currentEpisode || 0;
-        const existing = tvEpMap.get(title) || 0;
-        tvEpMap.set(title, Math.max(existing, ep));
-    });
+    // Group by title and iteration to handle duplicate records and rewatches for the same show
+    const tvGroups = new Map<string, Movie[]>();
+    for (const m of tvEntries) {
+        const key = `${normalizeTitle(m.title)}-iteration-${m.watchIteration || 1}`;
+        if (!tvGroups.has(key)) {
+            tvGroups.set(key, []);
+        }
+        tvGroups.get(key)!.push(m);
+    }
 
-    return Array.from(tvEpMap.values()).reduce((sum, ep) => sum + ep, 0);
+    let totalEpisodes = 0;
+    const activeMovieIds = new Set(movies.map(m => m.id));
+
+    for (const entries of tvGroups.values()) {
+        // Sort to calculate incremental progression
+        entries.sort((a, b) => {
+            const epDiff = (a.currentEpisode || 0) - (b.currentEpisode || 0);
+            if (epDiff !== 0) return epDiff;
+            return (a.addedAt || 0) - (b.addedAt || 0);
+        });
+
+        let lastMaxEpisode = 0;
+
+        for (const m of entries) {
+            const currentEp = m.currentEpisode || 0;
+            const deltaEpisodes = Math.max(0, currentEp - lastMaxEpisode);
+
+            if (deltaEpisodes > 0) {
+                if (activeMovieIds.has(m.id)) {
+                    totalEpisodes += deltaEpisodes;
+                }
+                lastMaxEpisode = currentEp;
+            }
+        }
+    }
+
+    return totalEpisodes;
 }
 
 /**
  * 计算所有观影时长统计
  */
-export function calculateWatchTimeStats(movies: Movie[]): WatchTimeStats {
+export function calculateWatchTimeStats(movies: Movie[], allMovies?: Movie[]): WatchTimeStats {
     const movieDuration = calculateMovieDuration(movies);
-    const tvDuration = calculateTvDuration(movies);
+    const tvDuration = calculateTvDuration(movies, allMovies);
     const totalMinutes = movieDuration + tvDuration;
-    const totalEpisodesWatched = calculateTotalEpisodes(movies);
+    const totalEpisodesWatched = calculateTotalEpisodes(movies, allMovies);
 
     return {
         movieDuration,

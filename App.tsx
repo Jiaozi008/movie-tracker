@@ -227,16 +227,22 @@ export default function App() {
             let valA = a[field as keyof Movie];
             let valB = b[field as keyof Movie];
 
+            let diff = 0;
             if (field === 'year') {
-                return (parseInt(String(a.year)) || 0) - (parseInt(String(b.year)) || 0);
-            }
-            if (field === 'title') {
-                return String(a.title).localeCompare(String(b.title), 'zh-CN');
+                diff = (parseInt(String(a.year)) || 0) - (parseInt(String(b.year)) || 0);
+            } else if (field === 'title') {
+                diff = String(a.title).localeCompare(String(b.title), 'zh-CN');
+            } else {
+                if (valA < valB) diff = -1;
+                else if (valA > valB) diff = 1;
             }
 
-            if (valA < valB) return -1;
-            if (valA > valB) return 1;
-            return 0;
+            if (diff !== 0) return diff;
+
+            // Secondary sort: if primary fields are equal (e.g., same addedAt date), sort by lastUpdated
+            const luA = a.lastUpdated || 0;
+            const luB = b.lastUpdated || 0;
+            return luA - luB;
         });
 
         return direction === 'asc' ? data : data.reverse();
@@ -615,6 +621,7 @@ export default function App() {
                                 <MovieCard
                                     key={movie.id}
                                     movie={movie}
+                                    allMovies={movies}
                                     onEdit={openEdit}
                                     onDelete={deleteMovie}
                                     isSelectionMode={isSelectionMode}

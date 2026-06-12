@@ -178,6 +178,33 @@ describe('calculateTvDuration', () => {
         const result = calculateTvDuration(movies);
         expect(result).toBe(135); // 90 + 45
     });
+
+    it('应该能正确区分不同重温轮次并独立累加时长', () => {
+        const movies = [
+            createMovie({
+                title: '三体',
+                mediaType: 'tv',
+                duration: 60,
+                currentEpisode: 3,
+                actualWatchTime: 180,
+                watchIteration: 1
+            }),
+            createMovie({
+                title: '三体',
+                mediaType: 'tv',
+                duration: 60,
+                currentEpisode: 3,
+                actualWatchTime: 180,
+                watchIteration: 2
+            })
+        ];
+
+        const duration = calculateTvDuration(movies);
+        const episodes = calculateTotalEpisodes(movies);
+
+        expect(duration).toBe(360); // 180 + 180
+        expect(episodes).toBe(6); // 3 + 3
+    });
 });
 
 describe('calculateTotalEpisodes', () => {
@@ -250,5 +277,69 @@ describe('用户真实场景', () => {
         expect(oldStats).toBe(120);
         expect(newStats).toBe(60);
         expect(newStats).toBe(oldStats / 2);
+    });
+
+    it('场景：跨月电视剧集数与时长计算（例如4月看7集，5月看到第10集，5月当月应统计3集及对应时长）', () => {
+        // 4月22日：看《博斯》到第3集
+        const recordApril1 = createMovie({
+            id: 'bosch-ep3',
+            title: '博斯',
+            mediaType: 'tv',
+            duration: 45,
+            currentEpisode: 3,
+            playbackSpeed: 1.0,
+            actualWatchTime: 135,
+            addedAt: new Date('2026-04-22T10:00:00Z').getTime()
+        });
+
+        // 4月23日：看《博斯》到第7集
+        const recordApril2 = createMovie({
+            id: 'bosch-ep7',
+            title: '博斯',
+            mediaType: 'tv',
+            duration: 45,
+            currentEpisode: 7,
+            playbackSpeed: 1.5,
+            actualWatchTime: 210, // 210分钟，平均单集 210 / 7 = 30分钟
+            addedAt: new Date('2026-04-23T10:00:00Z').getTime()
+        });
+
+        // 5月6日：看《博斯》到第10集
+        const recordMay = createMovie({
+            id: 'bosch-ep10',
+            title: '博斯',
+            mediaType: 'tv',
+            duration: 45,
+            currentEpisode: 10,
+            playbackSpeed: 1.5,
+            actualWatchTime: 300, // 300分钟，平均单集 300 / 10 = 30分钟
+            addedAt: new Date('2026-05-06T10:00:00Z').getTime()
+        });
+
+        const allMovies = [recordApril1, recordApril2, recordMay];
+
+        // 1. 测试4月份的统计
+        const aprilMovies = [recordApril1, recordApril2];
+        const aprilEpisodes = calculateTotalEpisodes(aprilMovies, allMovies);
+        const aprilTvDuration = calculateTvDuration(aprilMovies, allMovies);
+
+        // 4月份最大看到第7集，所以应该是7集
+        expect(aprilEpisodes).toBe(7);
+        // 时长贡献：
+        // 第1-3集：135分钟
+        // 第4-7集：4集 * 30分钟/集 = 120分钟
+        // 总计：255分钟
+        expect(aprilTvDuration).toBe(255);
+
+        // 2. 测试5月份的统计
+        const mayMovies = [recordMay];
+        const mayEpisodes = calculateTotalEpisodes(mayMovies, allMovies);
+        const mayTvDuration = calculateTvDuration(mayMovies, allMovies);
+
+        // 5月份从第7集看到第10集，增量应该是3集
+        expect(mayEpisodes).toBe(3);
+        // 时长贡献：
+        // 第8-10集：3集 * 30分钟/集 = 90分钟
+        expect(mayTvDuration).toBe(90);
     });
 });
