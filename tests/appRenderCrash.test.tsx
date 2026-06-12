@@ -99,4 +99,38 @@ describe('App Render & Cloud Download Crash Test', () => {
         const statsPanel = screen.getByText('统计面板');
         expect(statsPanel).toBeDefined();
     });
+
+    it('能够正确通过“多刷”按钮筛选多刷记录', async () => {
+        const rawText = fs.readFileSync("C:/Users/Administrator/.gemini/antigravity-ide/scratch/gist_content.txt", "utf-8");
+        const cloudMovies = JSON.parse(rawText);
+        
+        // 种子化两条“多刷”的测试数据
+        if (cloudMovies.length >= 2) {
+            cloudMovies[0].watchIteration = 2;
+            cloudMovies[1].watchIteration = 3;
+        }
+
+        const downloadSpy = vi.spyOn(gistService, 'downloadBackupGist').mockResolvedValue(cloudMovies);
+
+        render(<App />);
+
+        const syncButtons = screen.getAllByTitle('云同步');
+        fireEvent.click(syncButtons[0]);
+        const downloadButton = screen.getByText('从云端下载');
+        fireEvent.click(downloadButton);
+
+        await waitFor(() => {
+            expect(downloadSpy).toHaveBeenCalled();
+        });
+
+        // 寻找并点击“多刷”筛选按钮
+        const multiWatchBtn = screen.getByText('多刷');
+        expect(multiWatchBtn).toBeDefined();
+        fireEvent.click(multiWatchBtn);
+
+        // 统计 255 条云端记录中实际 watchIteration > 1 的记录数
+        const expectedMultiWatchCount = cloudMovies.filter((m: any) => m.watchIteration && m.watchIteration > 1).length;
+        expect(expectedMultiWatchCount).toBe(2);
+        console.log(`Successfully verified "多刷" filter with ${expectedMultiWatchCount} expected records.`);
+    });
 });

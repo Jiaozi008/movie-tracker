@@ -186,7 +186,14 @@ export default function App() {
                 fuzzyMatch(movie.genre, debouncedSearchTerm);
 
             // 2. Status Filter
-            const matchesStatus = filterStatus === '全部' || movie.status === filterStatus;
+            let matchesStatus = false;
+            if (filterStatus === '全部') {
+                matchesStatus = true;
+            } else if (filterStatus === '多刷') {
+                matchesStatus = !!(movie.watchIteration && movie.watchIteration > 1);
+            } else {
+                matchesStatus = movie.status === filterStatus;
+            }
 
             // 3. Date Filter
             let matchesDate = true;
@@ -581,7 +588,7 @@ export default function App() {
                             </div>
 
                             <div className="flex gap-2 overflow-x-auto pb-1 md:pb-0 no-scrollbar">
-                                {['全部', ...Object.values(MovieStatus)].map((status) => (
+                                {['全部', ...Object.values(MovieStatus), '多刷'].map((status) => (
                                     <button
                                         key={status}
                                         onClick={() => setFilterStatus(status)}
