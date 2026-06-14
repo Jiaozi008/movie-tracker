@@ -198,3 +198,56 @@ export function formatDuration(totalMinutes: number): { hours: number; minutes: 
         minutes: totalMinutes % 60
     };
 }
+
+/**
+ * 根据历史观影记录，推荐下一轮的观影轮次
+ */
+export function getRecommendedIteration(
+    movieTitle: string,
+    mediaType: 'movie' | 'tv',
+    existingMovies: Movie[],
+    excludeId?: string
+): string {
+    if (!movieTitle.trim()) return '1';
+    const norm = normalizeTitle(movieTitle);
+
+    if (mediaType === 'tv') {
+        const tvRecords = existingMovies.filter(m =>
+            normalizeTitle(m.title) === norm &&
+            (m.mediaType || 'movie') === 'tv' &&
+            m.id !== excludeId
+        );
+
+        if (tvRecords.length === 0) return '1';
+
+        // 获取历史记录中的最大刷数
+        const maxIteration = tvRecords.reduce((max, m) => {
+            return Math.max(max, m.watchIteration || 1);
+        }, 1);
+
+        // 检查该最大刷数是否已经完结（即存在 status === WATCHED 的记录）
+        const isMaxIterationCompleted = tvRecords.some(m =>
+            (m.watchIteration || 1) === maxIteration &&
+            m.status === MovieStatus.WATCHED
+        );
+
+        const recommended = isMaxIterationCompleted ? maxIteration + 1 : maxIteration;
+        return recommended.toString();
+    } else {
+        const movieRecords = existingMovies.filter(m =>
+            normalizeTitle(m.title) === norm &&
+            (m.mediaType || 'movie') === 'movie' &&
+            m.id !== excludeId
+        );
+
+        const watchedCount = movieRecords.filter(m => m.status === MovieStatus.WATCHED).length;
+
+        const maxIteration = movieRecords.reduce((max, m) => {
+            return Math.max(max, m.watchIteration || 1);
+        }, 0);
+
+        const recommended = Math.max(watchedCount, maxIteration) + 1;
+        return recommended.toString();
+    }
+}
+

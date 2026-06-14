@@ -4,6 +4,8 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import App from '../App';
 import * as gistService from '../services/githubGistService';
 import fs from 'fs';
+import os from 'os';
+import path from 'path';
 
 // Mock html5-qrcode because it accesses camera APIs and browser DOM details not fully in jsdom
 vi.mock('html5-qrcode', () => {
@@ -64,8 +66,8 @@ describe('App Render & Cloud Download Crash Test', () => {
     });
 
     it('点击从云端下载不应该导致 React 崩溃', async () => {
-        // Read actual 255 items from gist_content.txt
-        const rawText = fs.readFileSync("C:/Users/Administrator/.gemini/antigravity-ide/scratch/gist_content.txt", "utf-8");
+        const gistPath = path.join(__dirname, '..', 'cinelog_backup_2026-05-21.json');
+        const rawText = fs.readFileSync(gistPath, "utf-8");
         const cloudMovies = JSON.parse(rawText);
 
         // Spy on downloadBackupGist to return the actual movies from user gist
@@ -101,7 +103,8 @@ describe('App Render & Cloud Download Crash Test', () => {
     });
 
     it('能够正确通过“多刷”按钮筛选多刷记录', async () => {
-        const rawText = fs.readFileSync("C:/Users/Administrator/.gemini/antigravity-ide/scratch/gist_content.txt", "utf-8");
+        const gistPath = path.join(__dirname, '..', 'cinelog_backup_2026-05-21.json');
+        const rawText = fs.readFileSync(gistPath, "utf-8");
         const cloudMovies = JSON.parse(rawText);
         
         // 种子化两条“多刷”的测试数据

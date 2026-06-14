@@ -10,6 +10,7 @@ import { TmdbSearchModal } from './TmdbSearchModal';
 import { TmdbDetailResult } from '../services/tmdbService';
 import { translateToChinese } from '../services/geminiService';
 import { normalizeTitle } from '../utils/titleNormalizer';
+import { getRecommendedIteration as getRecommendedIterationUtil } from '../utils/statsCalculator';
 import { Wand2, Sparkles, X, Tv, Film, Upload, Image as ImageIcon, Trash2, ArrowLeft, Database, Monitor, Users } from 'lucide-react';
 
 interface MovieFormProps {
@@ -91,28 +92,8 @@ export const MovieForm: React.FC<MovieFormProps> = ({ initialData, existingMovie
     return habits;
   };
 
-  const getRecommendedIteration = (movieTitle: string) => {
-    if (!movieTitle.trim()) return '1';
-    const norm = normalizeTitle(movieTitle);
-    
-    // 计算历史已完结的记录数量
-    const watchedCount = existingMovies.filter(m => 
-      normalizeTitle(m.title) === norm && 
-      m.status === MovieStatus.WATCHED &&
-      m.id !== initialData?.id
-    ).length;
-
-    // 获取历史记录中的最大刷数
-    const maxIteration = existingMovies.reduce((max, m) => {
-      if (normalizeTitle(m.title) === norm && m.id !== initialData?.id) {
-        return Math.max(max, m.watchIteration || 1);
-      }
-      return max;
-    }, 0);
-
-    // 取两者最大值加 1 作为推荐的观影轮次
-    const recommended = Math.max(watchedCount, maxIteration) + 1;
-    return recommended.toString();
+  const getRecommendedIteration = (movieTitle: string, mediaType: MediaType) => {
+    return getRecommendedIterationUtil(movieTitle, mediaType, existingMovies, initialData?.id);
   };
 
   const handleTmdbSelect = async (detail: TmdbDetailResult, posterBase64: string | null) => {
@@ -129,7 +110,7 @@ export const MovieForm: React.FC<MovieFormProps> = ({ initialData, existingMovie
       mediaType: detail.mediaType,
       duration: detail.duration ? detail.duration.toString() : '',
       platform: detail.platform || '',
-      watchIteration: getRecommendedIteration(detail.title),
+      watchIteration: getRecommendedIteration(detail.title, (detail.mediaType || 'movie') as MediaType),
       ...(detail.totalEpisodes ? { totalEpisodes: detail.totalEpisodes.toString() } : {}),
       ...(posterBase64 ? { posterImage: posterBase64 } : (detail.posterUrl ? { posterImage: detail.posterUrl } : {})),
       ...getInheritedHabits(detail.title, detail.mediaType || 'movie'),
@@ -192,7 +173,7 @@ export const MovieForm: React.FC<MovieFormProps> = ({ initialData, existingMovie
         mediaType: data.mediaType,
         ...(data.duration ? { duration: data.duration.toString() } : {}),
         ...(data.totalEpisodes ? { totalEpisodes: data.totalEpisodes.toString() } : {}),
-        watchIteration: getRecommendedIteration(data.title),
+        watchIteration: getRecommendedIteration(data.title, (data.mediaType || 'movie') as MediaType),
         ...getInheritedHabits(data.title, data.mediaType || 'movie'),
       });
     },
@@ -215,7 +196,7 @@ export const MovieForm: React.FC<MovieFormProps> = ({ initialData, existingMovie
       posterColor: suggestion.posterColor,
       posterImage: suggestion.posterImage || '',
       duration: suggestion.duration ? suggestion.duration.toString() : '',
-      watchIteration: getRecommendedIteration(suggestion.title),
+      watchIteration: getRecommendedIteration(suggestion.title, (suggestion.mediaType || 'movie') as MediaType),
       ...habits,
     };
 
@@ -368,7 +349,7 @@ export const MovieForm: React.FC<MovieFormProps> = ({ initialData, existingMovie
                         if (exactMatch) {
                           handleSelectSuggestion(exactMatch);
                         } else {
-                          setField('watchIteration', getRecommendedIteration(state.title));
+                          setField('watchIteration', getRecommendedIteration(state.title, state.mediaType as MediaType));
                         }
                       }
                     }

@@ -10,7 +10,8 @@ import {
     calculateTotalEpisodes,
     calculateActualWatchTime,
     calculateWatchTimeStats,
-    formatDuration
+    formatDuration,
+    getRecommendedIteration
 } from '../utils/statsCalculator';
 import { Movie, MovieStatus } from '../types';
 
@@ -343,3 +344,64 @@ describe('用户真实场景', () => {
         expect(mayTvDuration).toBe(90);
     });
 });
+
+describe('getRecommendedIteration', () => {
+    it('空标题应返回 "1"', () => {
+        expect(getRecommendedIteration('', 'movie', [])).toBe('1');
+        expect(getRecommendedIteration('  ', 'tv', [])).toBe('1');
+    });
+
+    describe('电影推荐轮次', () => {
+        it('无历史记录时，应推荐 "1"', () => {
+            expect(getRecommendedIteration('盗梦空间', 'movie', [])).toBe('1');
+        });
+
+        it('有1部已看历史记录时，应推荐 "2"', () => {
+            const history = [
+                createMovie({ title: '盗梦空间', mediaType: 'movie', status: MovieStatus.WATCHED, watchIteration: 1 })
+            ];
+            expect(getRecommendedIteration('盗梦空间', 'movie', history)).toBe('2');
+        });
+
+        it('即使历史记录是在看状态，只要是电影，新纪录也应推荐 "2"', () => {
+            const history = [
+                createMovie({ title: '盗梦空间', mediaType: 'movie', status: MovieStatus.WATCHING, watchIteration: 1 })
+            ];
+            expect(getRecommendedIteration('盗梦空间', 'movie', history)).toBe('2');
+        });
+    });
+
+    describe('电视剧推荐轮次', () => {
+        it('无历史记录时，应推荐 "1"', () => {
+            expect(getRecommendedIteration('三体', 'tv', [])).toBe('1');
+        });
+
+        it('历史记录中最新的轮次尚未完结时，应推荐该最新轮次（不应加1）', () => {
+            const history = [
+                createMovie({ title: '三体', mediaType: 'tv', status: MovieStatus.WATCHING, currentEpisode: 1, watchIteration: 1 })
+            ];
+            // 记第2集时，应该依然算第1刷
+            expect(getRecommendedIteration('三体', 'tv', history)).toBe('1');
+        });
+
+        it('历史记录中最新的轮次已完结（存在完结状态记录）时，应推荐新轮次（加1）', () => {
+            const history = [
+                createMovie({ title: '三体', mediaType: 'tv', status: MovieStatus.WATCHING, currentEpisode: 1, watchIteration: 1 }),
+                createMovie({ title: '三体', mediaType: 'tv', status: MovieStatus.WATCHED, currentEpisode: 30, watchIteration: 1 })
+            ];
+            // 第1刷已完结，新纪录应推荐第2刷
+            expect(getRecommendedIteration('三体', 'tv', history)).toBe('2');
+        });
+
+        it('二刷进行中时，应继续推荐二刷', () => {
+            const history = [
+                createMovie({ title: '三体', mediaType: 'tv', status: MovieStatus.WATCHING, currentEpisode: 1, watchIteration: 1 }),
+                createMovie({ title: '三体', mediaType: 'tv', status: MovieStatus.WATCHED, currentEpisode: 30, watchIteration: 1 }),
+                createMovie({ title: '三体', mediaType: 'tv', status: MovieStatus.WATCHING, currentEpisode: 1, watchIteration: 2 })
+            ];
+            // 二刷还在看，记二刷第2集时应推荐第2刷
+            expect(getRecommendedIteration('三体', 'tv', history)).toBe('2');
+        });
+    });
+});
+

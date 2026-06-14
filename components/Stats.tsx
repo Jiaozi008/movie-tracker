@@ -6,7 +6,7 @@ import {
     Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis
 } from 'recharts';
 import { Movie, MovieStatus } from '../types';
-import { Film, Tv, PlayCircle, Calendar, Filter, BarChart3, PieChart as PieChartIcon, Activity, Star, Hexagon, Clock } from 'lucide-react';
+import { Film, Tv, PlayCircle, Calendar, Filter, BarChart3, PieChart as PieChartIcon, Activity, Star, Hexagon, Clock, Zap, Smile } from 'lucide-react';
 import {
     calculateMovieDuration,
     calculateTvDuration,
@@ -75,7 +75,9 @@ export const Stats: React.FC<StatsProps> = ({ movies }) => {
         trendData,
         genreData,
         rewatchRate,
-        rewatchKing
+        rewatchKing,
+        speedDemon,
+        judgePersona
     } = useMemo(() => {
         // Create an array of unique media entities for aggregate statistics (Genres, Status, etc.)
         // This ensures TV shows with multiple episode records don't skew distribution data
@@ -231,14 +233,26 @@ export const Stats: React.FC<StatsProps> = ({ movies }) => {
             }
         });
 
-        // 重温过的影片数 (最大刷数 > 1)
-        const rewatchedEntitiesCount = Array.from(rewatchMap.values()).filter(v => v > 1).length;
+        // 重温过的影片数 (在该过滤条件下的去重已看影片中，历史上最大刷数 > 1)
+        const rewatchedEntitiesCount = Array.from(rewatchMap.entries())
+            .filter(([key, maxIteration]) => {
+                return maxIteration > 1 && uniqueWatchedEntities.some(m => {
+                    const mKey = `${normalizeTitle(m.title)}-${m.mediaType || 'movie'}`;
+                    return mKey === key;
+                });
+            }).length;
         const rewatchRate = uniqueWatchedTotal > 0 
             ? ((rewatchedEntitiesCount / uniqueWatchedTotal) * 100).toFixed(1) 
             : '0.0';
 
-        // 重温之王
+        // 重温之王 (仅在当前过滤条件下的影片中，选取历史上重温数最多的)
         const rewatchList = Array.from(rewatchMap.entries())
+            .filter(([key]) => {
+                return uniqueWatchedEntities.some(m => {
+                    const mKey = `${normalizeTitle(m.title)}-${m.mediaType || 'movie'}`;
+                    return mKey === key;
+                });
+            })
             .map(([key, maxIteration]) => {
                 const parts = key.split('-');
                 const mediaType = parts.pop() || 'movie';
@@ -251,11 +265,32 @@ export const Stats: React.FC<StatsProps> = ({ movies }) => {
 
         const rewatchKing = rewatchList[0] || null;
 
+        // 倍速最高记录 (排除想看)
+        const activeWatchRecords = filteredMovies.filter(m => m.status !== MovieStatus.PLANNING);
+        const maxSpeedRecord = activeWatchRecords.reduce((max, m) => {
+            const speed = m.playbackSpeed || 1.0;
+            const maxSpeed = max?.playbackSpeed || 1.0;
+            return speed > maxSpeed ? m : max;
+        }, null as Movie | null);
+
+        const speedDemon = maxSpeedRecord && (maxSpeedRecord.playbackSpeed || 1.0) > 1.0
+            ? { title: maxSpeedRecord.title, speed: maxSpeedRecord.playbackSpeed || 1.0 }
+            : null;
+
+        // 影评人设
+        let judgePersona = '暂无评分';
+        if (ratedCount > 0) {
+            const avg = parseFloat(avgRating);
+            if (avg >= 4.2) judgePersona = '慷慨看客 💖';
+            else if (avg <= 3.0) judgePersona = '冷酷判官 🧐';
+            else judgePersona = '理性影迷 ⚖️';
+        }
+
         return {
             total, movieCount, tvCount, totalEpisodesWatched,
             movieDuration, tvDuration, totalDurationFormatted, avgRating,
             statusData, ratingData, trendData, genreData,
-            rewatchRate, rewatchKing
+            rewatchRate, rewatchKing, speedDemon, judgePersona
         };
     }, [filteredMovies, movies, timeFrame, selectedMonth, selectedYear]);
 
@@ -407,6 +442,31 @@ export const Stats: React.FC<StatsProps> = ({ movies }) => {
                             </>
                         ) : (
                             <div className="text-sm text-slate-500">暂无重温</div>
+                        )}
+                    </div>
+                </div>
+
+                {/* 影评人设 */}
+                <div className="bg-slate-800 p-3 sm:p-4 rounded-xl border border-slate-700 flex flex-col items-center justify-center relative overflow-hidden">
+                    <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/10 to-transparent" />
+                    <div className="text-slate-400 text-xs mb-1 z-10 font-medium flex items-center gap-1"><Smile size={12} className="text-indigo-400" /> 影评人设</div>
+                    <div className="text-sm font-bold text-indigo-400 z-10 whitespace-nowrap">{judgePersona}</div>
+                </div>
+
+                {/* 倍速狂人 */}
+                <div className="bg-slate-800 p-3 sm:p-4 rounded-xl border border-slate-700 flex flex-col items-center justify-center relative overflow-hidden">
+                    <div className="absolute inset-0 bg-gradient-to-br from-teal-500/10 to-transparent" />
+                    <div className="text-slate-400 text-xs mb-1 z-10 font-medium flex items-center gap-1"><Zap size={12} className="text-teal-400" /> 倍速狂人</div>
+                    <div className="text-center z-10 max-w-full px-1">
+                        {speedDemon ? (
+                            <>
+                                <div className="text-sm font-bold text-teal-400 truncate w-32 sm:w-auto" title={speedDemon.title}>
+                                    {speedDemon.title}
+                                </div>
+                                <div className="text-[10px] text-slate-500 font-medium">{speedDemon.speed}x 倍速</div>
+                            </>
+                        ) : (
+                            <div className="text-sm text-slate-500">皆为原速</div>
                         )}
                     </div>
                 </div>
