@@ -251,3 +251,34 @@ export function getRecommendedIteration(
     }
 }
 
+/**
+ * 电视剧继续追剧还是开启新一刷的集数与状态计算
+ */
+export interface TvInheritedHabits {
+    currentEpisode: string;
+    status: MovieStatus;
+}
+
+export function calculateTvInheritedHabits(
+    lastEpisode: number,
+    totalEpisodes: number,
+    lastIteration: number,
+    recommendedIteration: number
+): TvInheritedHabits {
+    if (recommendedIteration > lastIteration) {
+        return {
+            currentEpisode: '0',
+            status: MovieStatus.WATCHING
+        };
+    }
+    
+    const nextEp = lastEpisode + 1;
+    const currentEpisode = totalEpisodes > 0 ? Math.min(nextEp, totalEpisodes).toString() : nextEp.toString();
+    const status = totalEpisodes > 0 && nextEp >= totalEpisodes ? MovieStatus.WATCHED : MovieStatus.WATCHING;
+
+    return {
+        currentEpisode,
+        status
+    };
+}
+

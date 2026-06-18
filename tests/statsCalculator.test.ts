@@ -11,7 +11,8 @@ import {
     calculateActualWatchTime,
     calculateWatchTimeStats,
     formatDuration,
-    getRecommendedIteration
+    getRecommendedIteration,
+    calculateTvInheritedHabits
 } from '../utils/statsCalculator';
 import { Movie, MovieStatus } from '../types';
 
@@ -402,6 +403,32 @@ describe('getRecommendedIteration', () => {
             // 二刷还在看，记二刷第2集时应推荐第2刷
             expect(getRecommendedIteration('三体', 'tv', history)).toBe('2');
         });
+    });
+});
+
+describe('calculateTvInheritedHabits', () => {
+    it('当推荐刷数大于历史最大刷数（二刷/重温）时，应归零集数并设为追剧中', () => {
+        const result = calculateTvInheritedHabits(12, 12, 1, 2);
+        expect(result.currentEpisode).toBe('0');
+        expect(result.status).toBe(MovieStatus.WATCHING);
+    });
+
+    it('在同一刷中，应自动在历史已看集数基础上叠加 1 集', () => {
+        const result = calculateTvInheritedHabits(5, 12, 1, 1);
+        expect(result.currentEpisode).toBe('6');
+        expect(result.status).toBe(MovieStatus.WATCHING);
+    });
+
+    it('在同一刷中，叠加 1 集后正好达到总集数时，状态应自动变为完结', () => {
+        const result = calculateTvInheritedHabits(11, 12, 1, 1);
+        expect(result.currentEpisode).toBe('12');
+        expect(result.status).toBe(MovieStatus.WATCHED);
+    });
+
+    it('在同一刷中，若无总集数，应单纯叠加 1 集且状态为追剧中', () => {
+        const result = calculateTvInheritedHabits(8, 0, 1, 1);
+        expect(result.currentEpisode).toBe('9');
+        expect(result.status).toBe(MovieStatus.WATCHING);
     });
 });
 

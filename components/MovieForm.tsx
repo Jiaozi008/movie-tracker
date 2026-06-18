@@ -10,7 +10,7 @@ import { TmdbSearchModal } from './TmdbSearchModal';
 import { TmdbDetailResult } from '../services/tmdbService';
 import { translateToChinese } from '../services/geminiService';
 import { normalizeTitle } from '../utils/titleNormalizer';
-import { getRecommendedIteration as getRecommendedIterationUtil } from '../utils/statsCalculator';
+import { getRecommendedIteration as getRecommendedIterationUtil, calculateTvInheritedHabits } from '../utils/statsCalculator';
 import { Wand2, Sparkles, X, Tv, Film, Upload, Image as ImageIcon, Trash2, ArrowLeft, Database, Monitor, Users } from 'lucide-react';
 
 interface MovieFormProps {
@@ -86,11 +86,18 @@ export const MovieForm: React.FC<MovieFormProps> = ({ initialData, existingMovie
       customSpeed,
       platform: match.platform || ''
     };
-    // 2刷时已看集数归零，重新开始追
+    // 2刷时已看集数归零，重新开始追；同一刷则集数+1并升级完结状态
     if (match.mediaType === 'tv') {
-      habits.currentEpisode = '0';
-      // 新一轮观看默认为"追剧中"
-      habits.status = MovieStatus.WATCHING;
+      const recommendedIteration = parseInt(getRecommendedIteration(movieTitle, 'tv')) || 1;
+      const lastIteration = match.watchIteration || 1;
+      const inherited = calculateTvInheritedHabits(
+        match.currentEpisode || 0,
+        match.totalEpisodes || 0,
+        lastIteration,
+        recommendedIteration
+      );
+      habits.currentEpisode = inherited.currentEpisode;
+      habits.status = inherited.status;
     }
     return habits;
   };
