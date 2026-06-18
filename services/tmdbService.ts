@@ -199,7 +199,12 @@ export async function getTvDetails(tvId: number): Promise<TmdbDetailResult> {
     const castList = (d.credits?.cast || []).slice(0, 5).map((c: any) => c.name).join(', ');
     const countries = (d.origin_country || []).map((code: string) => translateCountry(code)).join(', ');
     const genres = (d.genres || []).map((g: any) => g.name).join(', ');
-    const episodeRuntime = (d.episode_run_time || [])[0] || 45;
+    // 优先从 episode_run_time 取，新版 TMDB API 该字段经常为空
+    // 回退到 last_episode_to_air.runtime 或 next_episode_to_air.runtime
+    const episodeRuntime = (d.episode_run_time || [])[0]
+        || d.last_episode_to_air?.runtime
+        || d.next_episode_to_air?.runtime
+        || 0;
 
     // Extract platform from watch providers
     const providers = d['watch/providers']?.results || {};

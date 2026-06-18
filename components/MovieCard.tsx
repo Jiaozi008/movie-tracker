@@ -49,6 +49,11 @@ export const MovieCard: React.FC<MovieCardProps> = ({
             .sort((a, b) => (a.watchIteration || 1) - (b.watchIteration || 1));
     }, [allMovies, movie.title, movie.mediaType]);
 
+    // 最大刷数，只有 > 1 时才认为有多刷
+    const maxIteration = useMemo(() => {
+        return rewatchRecords.reduce((max, r) => Math.max(max, r.watchIteration || 1), 1);
+    }, [rewatchRecords]);
+
     // Status Badge Colors (Existing)
     const statusColors = {
         [MovieStatus.WATCHED]: 'bg-green-500/20 text-green-400 border-green-500/30',
@@ -315,10 +320,10 @@ export const MovieCard: React.FC<MovieCardProps> = ({
                         )}
 
                         {/* 重温足迹微缩时间轴 */}
-                        {rewatchRecords.length > 1 && (
+                        {rewatchRecords.length > 1 && maxIteration > 1 && (
                             <div className="mt-3 pt-3 border-t border-slate-700/50">
                                 <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-                                    <Clock size={11} className="text-amber-500" /> 重温足迹 ({rewatchRecords.length} 刷)
+                                    <Clock size={11} className="text-amber-500" /> 重温足迹 ({maxIteration} 刷)
                                 </div>
                                 <div className="relative border-l border-slate-700 pl-3 ml-1.5 space-y-3 mt-2">
                                     {rewatchRecords.map(r => {

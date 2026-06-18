@@ -1,7 +1,7 @@
 {
   "name": "观影记录",
   "private": true,
-  "version": "1.0.1",
+  "version": "1.0.3",
   "type": "module",
   "scripts": {
     "dev": "concurrently \"npm run server\" \"cross-env VITE_API_KEY=hidden vite\"",

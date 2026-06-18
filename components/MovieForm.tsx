@@ -86,8 +86,11 @@ export const MovieForm: React.FC<MovieFormProps> = ({ initialData, existingMovie
       customSpeed,
       platform: match.platform || ''
     };
-    if (match.mediaType === 'tv' && match.currentEpisode) {
-      habits.currentEpisode = (match.currentEpisode + 1).toString();
+    // 2刷时已看集数归零，重新开始追
+    if (match.mediaType === 'tv') {
+      habits.currentEpisode = '0';
+      // 新一轮观看默认为"追剧中"
+      habits.status = MovieStatus.WATCHING;
     }
     return habits;
   };
@@ -264,7 +267,7 @@ export const MovieForm: React.FC<MovieFormProps> = ({ initialData, existingMovie
       posterColor: state.posterColor,
       posterImage: state.posterImage,
       mediaType: state.mediaType,
-      currentEpisode: state.mediaType === 'tv' ? (parseInt(state.currentEpisode) || 0) : undefined,
+      currentEpisode: state.mediaType === 'tv' ? Math.min(parseInt(state.currentEpisode) || 0, parseInt(state.totalEpisodes) || Infinity) : undefined,
       totalEpisodes: state.mediaType === 'tv' ? (parseInt(state.totalEpisodes) || 0) : undefined,
       duration: durationNum,
       playbackSpeed: actualSpeed,

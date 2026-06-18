@@ -54,8 +54,18 @@ const defaultState: MovieFormState = {
 
 function formReducer(state: MovieFormState, action: FormAction): MovieFormState {
     switch (action.type) {
-        case 'SET_FIELD':
-            return { ...state, [action.field]: action.value };
+        case 'SET_FIELD': {
+            const newState = { ...state, [action.field]: action.value };
+            // 切换 mediaType 时，自动调整默认状态（仅当状态是默认值时才切换）
+            if (action.field === 'mediaType') {
+                if (action.value === 'tv' && state.status === MovieStatus.WATCHED) {
+                    newState.status = MovieStatus.WATCHING;
+                } else if (action.value === 'movie' && state.status === MovieStatus.WATCHING) {
+                    newState.status = MovieStatus.WATCHED;
+                }
+            }
+            return newState;
+        }
         case 'SET_MULTIPLE':
             return { ...state, ...action.payload };
         case 'RESET':
