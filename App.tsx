@@ -20,12 +20,51 @@ export default function App() {
     const toast = useToast();
 
     // Data Logic via Custom Hook
-    const { movies, isSaving, addMovie, updateMovie, deleteMovie, undoDelete, bulkDeleteMovies, importMovies } = useMovies({
+    const { movies, isSaving, addMovie, updateMovie, deleteMovie, undoDelete, bulkDeleteMovies, importMovies, syncWithCloud } = useMovies({
         onSuccess: (msg) => toast.success(msg),
         onError: (msg) => toast.error(msg),
         onInfo: (msg) => toast.info(msg),
     });
-    const { config: syncConfig, saveConfig: saveSyncConfig, handleUpload, handleDownload, isSyncing, syncStatus, statusMessage } = useSync(movies, importMovies);
+    const { config: syncConfig, saveConfig: saveSyncConfig, handleUpload, handleDownload, isSyncing, syncStatus, statusMessage } = useSync(movies, syncWithCloud);
+
+    // Initial automatic cloud sync on app start
+    useEffect(() => {
+        const envToken = import.meta.env.VITE_GITHUB_GIST_TOKEN || '';
+        const savedConfig = localStorage.getItem('cinelog_sync_config_v1');
+        let isAuto = false;
+        let hasToken = !!envToken;
+        
+        if (savedConfig) {
+            try {
+                const parsed = JSON.parse(savedConfig);
+                isAuto = !!parsed.autoSync;
+                if (parsed.githubToken) hasToken = true;
+            } catch {}
+        }
+        
+        if (isAuto && hasToken) {
+            const timer = setTimeout(() => {
+                handleDownload(true);
+            }, 1000);
+            return () => clearTimeout(timer);
+        }
+    }, []);
+
+    // Regular hourly check for daily sync
+    useEffect(() => {
+        if (!syncConfig.autoSync || !syncConfig.githubToken) return;
+
+        const interval = setInterval(() => {
+            const lastSync = syncConfig.lastSyncTime || 0;
+            const oneDayMs = 24 * 60 * 60 * 1000;
+            if (Date.now() - lastSync > oneDayMs) {
+                console.log("CineLog Auto Sync: Over 24h since last sync, performing silent sync...");
+                handleDownload(true);
+            }
+        }, 3600000); // 1 hour
+
+        return () => clearInterval(interval);
+    }, [syncConfig.autoSync, syncConfig.githubToken, syncConfig.lastSyncTime]);
 
     // UI States
     const [isFormOpen, setIsFormOpen] = useState(false);

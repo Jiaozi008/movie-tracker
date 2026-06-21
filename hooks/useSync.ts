@@ -1,11 +1,15 @@
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { SyncConfig, Movie } from '../types';
 import * as gistService from '../services/githubGistService';
+import { mergeMovies } from '../utils/syncUtils';
 
 const SYNC_CONFIG_KEY = 'cinelog_sync_config_v1';
 
-export const useSync = (currentMovies: Movie[], onMoviesImported: (movies: Movie[]) => void) => {
+export const useSync = (
+    currentMovies: Movie[], 
+    syncWithCloud: (cloudMovies: Movie[]) => { hasLocalChanges: boolean; hasRemoteChanges: boolean; mergedMoviesCount: number }
+) => {
     const [config, setConfig] = useState<SyncConfig>(() => {
         const envToken = import.meta.env.VITE_GITHUB_GIST_TOKEN || '';
         try {
@@ -21,7 +25,6 @@ export const useSync = (currentMovies: Movie[], onMoviesImported: (movies: Movie
                 };
             }
 
-            // If local config exists but has no token, populate from ENV automatically
             if (!parsed.githubToken && envToken) {
                 parsed.githubToken = envToken;
             }
@@ -36,6 +39,9 @@ export const useSync = (currentMovies: Movie[], onMoviesImported: (movies: Movie
     const [syncStatus, setSyncStatus] = useState<'idle' | 'success' | 'error'>('idle');
     const [statusMessage, setStatusMessage] = useState('');
 
+    const lastSyncedMoviesRef = useRef<Movie[]>(currentMovies);
+    const autoUploadTimerRef = useRef<any>(null);
+
     useEffect(() => {
         localStorage.setItem(SYNC_CONFIG_KEY, JSON.stringify(config));
     }, [config]);
@@ -43,6 +49,44 @@ export const useSync = (currentMovies: Movie[], onMoviesImported: (movies: Movie
     const saveConfig = (newConfig: Partial<SyncConfig>) => {
         setConfig(prev => ({ ...prev, ...newConfig }));
     };
+
+    // Debounced auto-upload effect
+    useEffect(() => {
+        if (currentMovies !== lastSyncedMoviesRef.current) {
+            const hasChanges = JSON.stringify(currentMovies) !== JSON.stringify(lastSyncedMoviesRef.current);
+            
+            if (hasChanges) {
+                if (config.autoSync && config.githubToken && !isSyncing) {
+                    if (autoUploadTimerRef.current) {
+                        clearTimeout(autoUploadTimerRef.current);
+                    }
+                    
+                    autoUploadTimerRef.current = setTimeout(async () => {
+                        try {
+                            let targetGistId = config.gistId;
+                            if (targetGistId && config.githubToken) {
+                                await gistService.updateBackupGist(config.githubToken, targetGistId, currentMovies);
+                                saveConfig({ lastSyncTime: Date.now() });
+                                lastSyncedMoviesRef.current = currentMovies;
+                                console.log("CineLog Auto Sync: Uploaded local changes successfully");
+                            }
+                        } catch (err) {
+                            console.error("CineLog Auto Sync: Failed to upload local changes", err);
+                        }
+                    }, 5000); // 5s debounce
+                } else {
+                    // Update reference anyway when autoSync is disabled to prevent sudden upload on toggle
+                    lastSyncedMoviesRef.current = currentMovies;
+                }
+            }
+        }
+        
+        return () => {
+            if (autoUploadTimerRef.current) {
+                clearTimeout(autoUploadTimerRef.current);
+            }
+        };
+    }, [currentMovies, config.autoSync, config.githubToken, isSyncing, config.gistId]);
 
     const handleUpload = async () => {
         if (!config.githubToken) {
@@ -56,24 +100,22 @@ export const useSync = (currentMovies: Movie[], onMoviesImported: (movies: Movie
         try {
             let targetGistId = config.gistId;
 
-            // If no Gist ID saved, try to find one or create new
             if (!targetGistId) {
                 const foundId = await gistService.findExistingBackupGist(config.githubToken);
                 if (foundId) {
                     targetGistId = foundId;
                     saveConfig({ gistId: foundId });
                 } else {
-                    // Create new
                     const newId = await gistService.createBackupGist(config.githubToken, currentMovies);
                     targetGistId = newId;
                     saveConfig({ gistId: newId });
                 }
             } else {
-                // Update existing
                 await gistService.updateBackupGist(config.githubToken, targetGistId, currentMovies);
             }
 
             saveConfig({ lastSyncTime: Date.now() });
+            lastSyncedMoviesRef.current = currentMovies;
             setSyncStatus('success');
             setStatusMessage("云端备份成功");
         } catch (e: any) {
@@ -82,7 +124,6 @@ export const useSync = (currentMovies: Movie[], onMoviesImported: (movies: Movie
             setStatusMessage(e.message || "同步失败，请检查 Token 或网络");
         } finally {
             setIsSyncing(false);
-            // Clear status after 3s
             setTimeout(() => {
                 setSyncStatus('idle');
                 setStatusMessage('');
@@ -90,11 +131,14 @@ export const useSync = (currentMovies: Movie[], onMoviesImported: (movies: Movie
         }
     };
 
-    const handleDownload = async () => {
+    const handleDownload = async (isSilent = false) => {
         if (!config.githubToken) return;
 
         setIsSyncing(true);
-        setSyncStatus('idle');
+        if (!isSilent) {
+            setSyncStatus('idle');
+            setStatusMessage("正在与云端对齐数据...");
+        }
         try {
             let targetGistId = config.gistId;
             if (!targetGistId) {
@@ -109,24 +153,51 @@ export const useSync = (currentMovies: Movie[], onMoviesImported: (movies: Movie
 
             const cloudMovies = await gistService.downloadBackupGist(config.githubToken, targetGistId);
 
-            // Merge logic is handled by the parent via callback to keep hook pure regarding movie state
-            onMoviesImported(cloudMovies);
+            // Execute smart merge
+            const { hasLocalChanges, hasRemoteChanges } = syncWithCloud(cloudMovies);
+
+            let updatedMovies = currentMovies;
+            if (hasLocalChanges) {
+                // Get the merged content to keep local reference in sync
+                const deletedStorage = localStorage.getItem('cinelog_deleted_movies_v1');
+                const deletedRecords = deletedStorage ? JSON.parse(deletedStorage) : {};
+                const mergeRes = mergeMovies(currentMovies, cloudMovies, deletedRecords);
+                updatedMovies = mergeRes.merged;
+            }
+
+            lastSyncedMoviesRef.current = updatedMovies;
+
+            if (hasRemoteChanges) {
+                if (!isSilent) setStatusMessage("云端需要同步，正在上传最新更新...");
+                await gistService.updateBackupGist(config.githubToken, targetGistId, updatedMovies);
+            }
 
             saveConfig({ lastSyncTime: Date.now() });
-            setSyncStatus('success');
-            setStatusMessage("已从云端拉取最新数据");
+            if (!isSilent) {
+                setSyncStatus('success');
+                setStatusMessage("同步完成：多端数据已对齐");
+            }
         } catch (e: any) {
-            console.error(e);
-            setSyncStatus('error');
-            setStatusMessage(e.message || "下载失败");
+            console.error("CineLog Sync Error:", e);
+            if (!isSilent) {
+                setSyncStatus('error');
+                setStatusMessage(e.message || "数据下载/对齐失败");
+            }
         } finally {
             setIsSyncing(false);
-            setTimeout(() => {
-                setSyncStatus('idle');
-                setStatusMessage('');
-            }, 3000);
+            if (!isSilent) {
+                setTimeout(() => {
+                    setSyncStatus('idle');
+                    setStatusMessage('');
+                }, 3000);
+            }
         }
     };
+
+    // Update ref when page loads or sync status changes to keep standard sync baseline
+    useEffect(() => {
+        lastSyncedMoviesRef.current = currentMovies;
+    }, []);
 
     return {
         config,
@@ -138,3 +209,4 @@ export const useSync = (currentMovies: Movie[], onMoviesImported: (movies: Movie
         statusMessage
     };
 };
+

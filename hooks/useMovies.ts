@@ -2,8 +2,11 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Movie } from '../types';
 import { migrateAllMovieStatuses } from '../utils/migrationUtils';
+import { mergeMovies } from '../utils/syncUtils';
 
 const STORAGE_KEY = 'cinelog_movies_v1';
+const DELETED_STORAGE_KEY = 'cinelog_deleted_movies_v1';
+
 
 export interface UseMoviesCallbacks {
   onSuccess?: (msg: string) => void;
@@ -46,6 +49,15 @@ export const useMovies = (callbacks?: UseMoviesCallbacks) => {
     }
   });
 
+  const [deletedMovies, setDeletedMovies] = useState<Record<string, number>>(() => {
+    try {
+      const saved = localStorage.getItem(DELETED_STORAGE_KEY);
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
+
   const [isSaving, setIsSaving] = useState(false);
 
   // Real-time Save Effect
@@ -78,14 +90,20 @@ export const useMovies = (callbacks?: UseMoviesCallbacks) => {
   }, []);
 
   const deleteMovie = useCallback((id: string) => {
-    // Store movie for potential undo
     setMovies(prev => {
       const movieToDelete = prev.find(m => String(m.id) === String(id));
       const newMovies = prev.filter(m => String(m.id) !== String(id));
 
-      // Notify caller with undo capability
-      if (movieToDelete && callbacks?.onSuccess) {
-        callbacks.onSuccess(`已删除「${movieToDelete.title}」`);
+      if (movieToDelete) {
+        setDeletedMovies(d => {
+          const updated = { ...d, [id]: Date.now() };
+          localStorage.setItem(DELETED_STORAGE_KEY, JSON.stringify(updated));
+          return updated;
+        });
+
+        if (callbacks?.onSuccess) {
+          callbacks.onSuccess(`已删除「${movieToDelete.title}」`);
+        }
       }
 
       return newMovies;
@@ -94,8 +112,16 @@ export const useMovies = (callbacks?: UseMoviesCallbacks) => {
 
   const undoDelete = useCallback((movie: Movie) => {
     setMovies(prev => {
-      // Insert back at original position (or beginning)
       if (prev.some(m => m.id === movie.id)) return prev;
+      
+      // 撤销删除时，要把 Tombstone 中的记录移出
+      setDeletedMovies(d => {
+        const updated = { ...d };
+        delete updated[movie.id];
+        localStorage.setItem(DELETED_STORAGE_KEY, JSON.stringify(updated));
+        return updated;
+      });
+
       return [movie, ...prev];
     });
   }, []);
@@ -103,8 +129,22 @@ export const useMovies = (callbacks?: UseMoviesCallbacks) => {
   const bulkDeleteMovies = useCallback((ids: Set<string>) => {
     if (ids.size === 0) return;
     if (window.confirm(`确定要删除选中的 ${ids.size} 条记录吗？此操作无法撤销。`)) {
-      setMovies(prev => prev.filter(m => !ids.has(String(m.id))));
-      callbacks?.onSuccess?.(`已删除 ${ids.size} 条记录`);
+      setMovies(prev => {
+        const remaining = prev.filter(m => !ids.has(String(m.id)));
+        
+        setDeletedMovies(d => {
+          const updated = { ...d };
+          const now = Date.now();
+          ids.forEach(id => {
+            updated[id] = now;
+          });
+          localStorage.setItem(DELETED_STORAGE_KEY, JSON.stringify(updated));
+          return updated;
+        });
+
+        callbacks?.onSuccess?.(`已删除 ${ids.size} 条记录`);
+        return remaining;
+      });
     }
   }, [callbacks]);
 
@@ -121,25 +161,47 @@ export const useMovies = (callbacks?: UseMoviesCallbacks) => {
     }
 
     const { migrated } = migrateAllMovieStatuses(validMovies);
-    const currentIds = new Set(movies.map(m => String(m.id)));
-    const uniqueNewMovies = migrated.filter(m => !currentIds.has(String(m.id)));
+    const { merged, hasLocalChanges } = mergeMovies(movies, migrated, deletedMovies);
 
-    if (uniqueNewMovies.length > 0) {
-      setMovies(prev => [...uniqueNewMovies, ...prev]);
-      callbacks?.onSuccess?.(`成功导入 ${uniqueNewMovies.length} 条新记录。${newMovies.length - uniqueNewMovies.length} 条重复或损坏记录已跳过。`);
+    if (hasLocalChanges) {
+      setMovies(merged);
+      callbacks?.onSuccess?.(`成功导入并合并 ${merged.length} 条记录。`);
     } else {
-      callbacks?.onInfo?.('没有发现新记录（所有记录已存在）。');
+      callbacks?.onInfo?.('没有发现新记录（所有数据已是最新）。');
     }
-  }, [movies, callbacks]);
+  }, [movies, deletedMovies, callbacks]);
+
+  const syncWithCloud = useCallback((cloudMovies: Movie[]) => {
+    const { merged, hasLocalChanges, hasRemoteChanges, updatedDeletedRecords } = mergeMovies(
+      movies,
+      cloudMovies,
+      deletedMovies
+    );
+
+    if (hasLocalChanges) {
+      setMovies(merged);
+    }
+
+    setDeletedMovies(updatedDeletedRecords);
+    localStorage.setItem(DELETED_STORAGE_KEY, JSON.stringify(updatedDeletedRecords));
+
+    return {
+      hasLocalChanges,
+      hasRemoteChanges,
+      mergedMoviesCount: merged.length
+    };
+  }, [movies, deletedMovies]);
 
   return {
     movies,
     isSaving,
+    deletedMovies,
     addMovie,
     updateMovie,
     deleteMovie,
     undoDelete,
     bulkDeleteMovies,
-    importMovies
+    importMovies,
+    syncWithCloud
   };
 };

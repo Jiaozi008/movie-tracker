@@ -494,6 +494,26 @@ export const SyncModal: React.FC<SyncModalProps> = ({
                 </p>
               </div>
 
+              <div className="flex items-center justify-between p-3 rounded-xl bg-slate-800/40 border border-slate-800/80">
+                <div className="space-y-0.5">
+                  <label className="text-sm font-semibold text-slate-200">自动云同步</label>
+                  <p className="text-xs text-slate-500">启动应用或有数据修改时自动完成同步对齐</p>
+                </div>
+                <button
+                  onClick={() => onSaveConfig({ autoSync: !config.autoSync })}
+                  disabled={!config.githubToken}
+                  className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                    config.autoSync && config.githubToken ? 'bg-indigo-600' : 'bg-slate-700'
+                  } ${!config.githubToken ? 'opacity-40 cursor-not-allowed' : ''}`}
+                >
+                  <span
+                    className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-md ring-0 transition duration-200 ease-in-out ${
+                      config.autoSync && config.githubToken ? 'translate-x-5' : 'translate-x-0'
+                    }`}
+                  />
+                </button>
+              </div>
+
               <div className="h-px bg-slate-800 my-2"></div>
 
               <div className="grid grid-cols-2 gap-4">
