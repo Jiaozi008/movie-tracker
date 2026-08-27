@@ -220,6 +220,37 @@ describe('calculateTotalEpisodes', () => {
         const result = calculateTotalEpisodes(movies);
         expect(result).toBe(18); // 10 + 8
     });
+
+    it('不同季的剧集（第一季、第二季）应独立统计集数而不被吞并', () => {
+        const movies = [
+            createMovie({ title: '庆余年 第一季', mediaType: 'tv', currentEpisode: 46 }),
+            createMovie({ title: '庆余年 第二季', mediaType: 'tv', currentEpisode: 36 }),
+        ];
+
+        const result = calculateTotalEpisodes(movies);
+        expect(result).toBe(82); // 46 + 36
+    });
+
+    it('按月筛选且存在 watchHistory 时，应精确统计当月打卡集数', () => {
+        const augMovie = createMovie({
+            title: '权力的游戏',
+            mediaType: 'tv',
+            currentEpisode: 10,
+            watchHistory: [
+                { episode: 1, date: new Date('2026-07-15T12:00:00Z').getTime() },
+                { episode: 2, date: new Date('2026-07-16T12:00:00Z').getTime() },
+                { episode: 3, date: new Date('2026-08-01T12:00:00Z').getTime() },
+                { episode: 4, date: new Date('2026-08-02T12:00:00Z').getTime() },
+                { episode: 5, date: new Date('2026-08-03T12:00:00Z').getTime() },
+            ]
+        });
+
+        const julyCount = calculateTotalEpisodes([augMovie], [augMovie], { timeFrame: 'month', selectedMonth: '2026-07' });
+        const augCount = calculateTotalEpisodes([augMovie], [augMovie], { timeFrame: 'month', selectedMonth: '2026-08' });
+
+        expect(julyCount).toBe(2);
+        expect(augCount).toBe(3);
+    });
 });
 
 describe('calculateWatchTimeStats', () => {

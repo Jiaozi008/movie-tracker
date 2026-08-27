@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Movie, MovieStatus } from './types';
 import { MovieCard } from './components/MovieCard';
+import { PosterWallCard } from './components/PosterWallCard';
 import { MovieForm } from './components/MovieForm';
 import { Button } from './components/ui/Button';
 import { Stats } from './components/Stats';
@@ -9,11 +10,13 @@ import { AiButler } from './components/AiButler';
 import { useDebounce } from './hooks/useDebounce';
 import { useSync } from './hooks/useSync';
 import { useToast } from './hooks/useToast';
+import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { fuzzyMatch } from './utils/searchUtils';
-import { parseImportFile, downloadFile } from './utils/fileUtils';
+import { parseImportFile, downloadFile, convertToCSV } from './utils/fileUtils';
+import { calculateEpisodeUpdate } from './utils/episodeUtils';
 import { SyncModal } from './components/SyncModal';
 import { ToastContainer } from './components/ui/Toast';
-import { Plus, Search, Save, Film, Download, FileJson, FileSpreadsheet, ChevronDown, Calendar, CheckSquare, Trash2, X, Upload, ArrowUpDown, Globe, ChevronLeft, ChevronRight, Menu, Cloud } from 'lucide-react';
+import { Plus, Search, Save, Film, Download, FileJson, FileSpreadsheet, ChevronDown, Calendar, CheckSquare, Trash2, X, Upload, ArrowUpDown, Globe, ChevronLeft, ChevronRight, Menu, Cloud, Tag, LayoutGrid, Image as ImageIcon } from 'lucide-react';
 
 export default function App() {
     // Toast system
@@ -80,7 +83,20 @@ export default function App() {
     const [filterStatus, setFilterStatus] = useState<string>('全部');
     const [dateFilter, setDateFilter] = useState<string>('all');
     const [filterCountry, setFilterCountry] = useState<string>('all');
+    const [filterTag, setFilterTag] = useState<string>('all');
     const [sortConfig, setSortConfig] = useState<{ field: string, direction: 'asc' | 'desc' }>({ field: 'addedAt', direction: 'desc' });
+
+    // View Mode State: 'grid' (标准卡片) | 'poster' (海报墙)
+    const [viewMode, setViewMode] = useState<'grid' | 'poster'>(() => {
+        return (localStorage.getItem('cinelog_view_mode') as 'grid' | 'poster') || 'grid';
+    });
+
+    const handleViewModeChange = (mode: 'grid' | 'poster' | 'compact') => {
+        const target = mode === 'poster' ? 'poster' : 'grid';
+        setViewMode(target);
+        localStorage.setItem('cinelog_view_mode', target);
+        toast.info(target === 'poster' ? '已切换为海报墙模式 🎬' : '已切换为标准卡片模式 🎴');
+    };
 
     // Pagination State
     const [currentPage, setCurrentPage] = useState(1);
@@ -90,24 +106,85 @@ export default function App() {
     const [isSelectionMode, setIsSelectionMode] = useState(false);
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
-    // File Input Ref for Import
+    // File Input Ref for Import & Search Input Ref for Shortcut
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const searchInputRef = useRef<HTMLInputElement>(null);
+
+    // Quick Episode +1 / -1 handler with automatic completion logic
+    const handleQuickEpisodeUpdate = (movie: Movie, delta: 1 | -1) => {
+        const result = calculateEpisodeUpdate(movie, delta);
+        if (!result) return;
+
+        updateMovie(result.updatedMovie);
+        if (result.isCompleted) {
+            toast.success(result.message);
+        } else {
+            toast.info(result.message);
+        }
+    };
+
+    // Global Keyboard Shortcuts (N, /, 1, 2, Esc, ?)
+    useKeyboardShortcuts({
+        onSearchFocus: () => {
+            searchInputRef.current?.focus();
+            searchInputRef.current?.select();
+            toast.info('已聚焦搜索框');
+        },
+        onNewMovie: () => {
+            if (!isFormOpen && !isSyncModalOpen) {
+                setEditingMovie(null);
+                setIsFormOpen(true);
+            }
+        },
+        onEscape: () => {
+            if (isFormOpen) {
+                setIsFormOpen(false);
+                setEditingMovie(null);
+            } else if (isSyncModalOpen) {
+                setIsSyncModalOpen(false);
+            } else if (showExportMenu) {
+                setShowExportMenu(false);
+            } else if (showMobileMenu) {
+                setShowMobileMenu(false);
+            } else if (isSelectionMode) {
+                setIsSelectionMode(false);
+                setSelectedIds(new Set());
+            }
+        },
+        onViewModeChange: handleViewModeChange,
+        onShowHelp: () => {
+            toast.info('⌨️ 快捷键: N (新增) | / (搜索) | 1 (卡片) | 2 (海报墙) | Esc (关闭)');
+        },
+        enabled: !isFormOpen && !isSyncModalOpen
+    });
 
     // Reset pagination when filters change
     useEffect(() => {
         setCurrentPage(1);
-    }, [debouncedSearchTerm, filterStatus, dateFilter, filterCountry, sortConfig]);
+    }, [debouncedSearchTerm, filterStatus, dateFilter, filterCountry, filterTag, sortConfig]);
 
-    // Calculate available date options from data
+    // Calculate available date options from data (including watchHistory timestamps)
     const dateOptions = useMemo(() => {
         const yearsSet = new Set<number>();
         const monthsSet = new Set<string>();
 
         movies.forEach(m => {
-            const d = new Date(m.addedAt);
-            yearsSet.add(d.getFullYear());
-            const monthStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-            monthsSet.add(monthStr);
+            if (m.addedAt) {
+                const d = new Date(m.addedAt);
+                yearsSet.add(d.getFullYear());
+                const monthStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+                monthsSet.add(monthStr);
+            }
+            if (m.watchHistory && Array.isArray(m.watchHistory)) {
+                m.watchHistory.forEach(log => {
+                    if (log.date) {
+                        const d = new Date(log.date);
+                        yearsSet.add(d.getFullYear());
+                        const monthStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+                        monthsSet.add(monthStr);
+                    }
+                });
+            }
         });
 
         const sortedYears = Array.from(yearsSet).sort((a, b) => b - a);
@@ -130,15 +207,41 @@ export default function App() {
         return Array.from(countries).sort((a, b) => a.localeCompare(b, 'zh-CN'));
     }, [movies]);
 
+    // Calculate available tag options
+    const tagOptions = useMemo(() => {
+        const tagSet = new Set<string>();
+        movies.forEach(m => {
+            if (m.tags && Array.isArray(m.tags)) {
+                m.tags.forEach(t => {
+                    const tr = t.trim();
+                    if (tr) tagSet.add(tr);
+                });
+            }
+        });
+        return Array.from(tagSet).sort((a, b) => a.localeCompare(b, 'zh-CN'));
+    }, [movies]);
+
     const handleAddMovie = (movieData: Omit<Movie, 'id' | 'lastUpdated'>) => {
-        addMovie(movieData);
-        setIsFormOpen(false);
+        try {
+            addMovie(movieData);
+            setIsFormOpen(false);
+            toast.success(`已添加「${movieData.title}」`);
+        } catch (err: any) {
+            console.error('Error adding movie:', err);
+            toast.error(err?.message || '添加记录失败，请重试');
+        }
     };
 
     const handleUpdateMovie = (movieData: any) => {
-        updateMovie(movieData);
-        setIsFormOpen(false);
-        setEditingMovie(null);
+        try {
+            updateMovie(movieData);
+            setIsFormOpen(false);
+            setEditingMovie(null);
+            toast.success(`已保存「${movieData.title}」修改`);
+        } catch (err: any) {
+            console.error('Error updating movie:', err);
+            toast.error(err?.message || '保存修改失败，请重试');
+        }
     };
 
     // Bulk Actions
@@ -220,9 +323,14 @@ export default function App() {
     // Derived state for filtering and sorting
     const filteredMovies = useMemo(() => {
         return movies.filter(movie => {
-            // 1. Search Filter (with Fuzzy Match & Debounce)
+            // 1. Search Filter (with Fuzzy Match & Debounce across title, director, cast, genre, tags, review, overview)
             const matchesSearch = fuzzyMatch(movie.title, debouncedSearchTerm) ||
-                fuzzyMatch(movie.genre, debouncedSearchTerm);
+                fuzzyMatch(movie.director, debouncedSearchTerm) ||
+                fuzzyMatch(movie.cast, debouncedSearchTerm) ||
+                fuzzyMatch(movie.genre, debouncedSearchTerm) ||
+                fuzzyMatch(movie.review, debouncedSearchTerm) ||
+                fuzzyMatch(movie.overview, debouncedSearchTerm) ||
+                (movie.tags ? movie.tags.some(t => fuzzyMatch(t, debouncedSearchTerm)) : false);
 
             // 2. Status Filter
             let matchesStatus = false;
@@ -234,36 +342,49 @@ export default function App() {
                 matchesStatus = movie.status === filterStatus;
             }
 
-            // 3. Date Filter
+            // 3. Date Filter (Check both addedAt and watchHistory dates)
             let matchesDate = true;
             if (dateFilter !== 'all') {
-                const movieDate = new Date(movie.addedAt);
-                const now = new Date();
+                const checkTimestamp = (ts: number): boolean => {
+                    const d = new Date(ts);
+                    const now = new Date();
 
-                if (dateFilter === '7d') {
-                    const cutoff = new Date();
-                    cutoff.setDate(now.getDate() - 7);
-                    matchesDate = movieDate >= cutoff;
-                } else if (dateFilter === '30d') {
-                    const cutoff = new Date();
-                    cutoff.setDate(now.getDate() - 30);
-                    matchesDate = movieDate >= cutoff;
-                } else if (dateFilter.startsWith('year_')) {
-                    const year = parseInt(dateFilter.split('_')[1]);
-                    matchesDate = movieDate.getFullYear() === year;
-                } else if (dateFilter.startsWith('month_')) {
-                    const targetYM = dateFilter.replace('month_', '');
-                    const movieYM = `${movieDate.getFullYear()}-${String(movieDate.getMonth() + 1).padStart(2, '0')}`;
-                    matchesDate = targetYM === movieYM;
-                }
+                    if (dateFilter === '7d') {
+                        const cutoff = new Date();
+                        cutoff.setDate(now.getDate() - 7);
+                        return d >= cutoff;
+                    }
+                    if (dateFilter === '30d') {
+                        const cutoff = new Date();
+                        cutoff.setDate(now.getDate() - 30);
+                        return d >= cutoff;
+                    }
+                    if (dateFilter.startsWith('year_')) {
+                        const year = parseInt(dateFilter.split('_')[1]);
+                        return d.getFullYear() === year;
+                    }
+                    if (dateFilter.startsWith('month_')) {
+                        const targetYM = dateFilter.replace('month_', '');
+                        const movieYM = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+                        return targetYM === movieYM;
+                    }
+                    return true;
+                };
+
+                const addedAtMatches = checkTimestamp(movie.addedAt);
+                const historyMatches = movie.watchHistory && movie.watchHistory.some(log => checkTimestamp(log.date));
+                matchesDate = addedAtMatches || !!historyMatches;
             }
 
             // 4. Country Filter
             const matchesCountry = filterCountry === 'all' || (movie.country && movie.country.includes(filterCountry));
 
-            return matchesSearch && matchesStatus && matchesDate && matchesCountry;
+            // 5. Tag Filter
+            const matchesTag = filterTag === 'all' || (movie.tags && movie.tags.includes(filterTag));
+
+            return matchesSearch && matchesStatus && matchesDate && matchesCountry && matchesTag;
         });
-    }, [movies, debouncedSearchTerm, filterStatus, dateFilter, filterCountry]);
+    }, [movies, debouncedSearchTerm, filterStatus, dateFilter, filterCountry, filterTag]);
 
     const sortedMovies = useMemo(() => {
         const data = [...filteredMovies];
@@ -402,13 +523,9 @@ export default function App() {
                                             </button>
                                             <button
                                                 onClick={() => {
-                                                    // Dynamic import or assumed global util availability logic
-                                                    // We will fix this in the imports section of this file content
-                                                    import('./utils/fileUtils').then(mod => {
-                                                        const csv = mod.convertToCSV(movies);
-                                                        downloadFile(csv, 'csv');
-                                                        setShowExportMenu(false);
-                                                    });
+                                                    const csv = convertToCSV(movies);
+                                                    downloadFile(csv, 'csv');
+                                                    setShowExportMenu(false);
                                                 }}
                                                 className="w-full px-4 py-3 text-left text-sm text-slate-300 hover:bg-slate-700 hover:text-white transition-colors flex items-center gap-2 border-t border-slate-700"
                                             >
@@ -436,8 +553,14 @@ export default function App() {
                         </button>
 
                         {!isSelectionMode && (
-                            <Button onClick={() => { setEditingMovie(null); setIsFormOpen(true); }} size="sm" className="shadow-lg shadow-indigo-500/20 hidden sm:flex">
-                                <Plus size={16} className="mr-1" /> 新增记录
+                            <Button
+                                onClick={() => { setEditingMovie(null); setIsFormOpen(true); }}
+                                size="sm"
+                                className="shadow-lg shadow-indigo-500/20 hidden sm:flex items-center gap-1.5"
+                                title="新增记录 (快捷键 N)"
+                            >
+                                <Plus size={16} /> <span>新增记录</span>
+                                <kbd className="px-1 py-0.2 text-[9px] font-mono text-indigo-200 bg-indigo-700/60 border border-indigo-400/30 rounded">N</kbd>
                             </Button>
                         )}
 
@@ -472,11 +595,9 @@ export default function App() {
 
                                     <button
                                         onClick={() => {
-                                            import('./utils/fileUtils').then(mod => {
-                                                const csv = mod.convertToCSV(movies);
-                                                downloadFile(csv, 'csv');
-                                                setShowMobileMenu(false);
-                                            });
+                                            const csv = convertToCSV(movies);
+                                            downloadFile(csv, 'csv');
+                                            setShowMobileMenu(false);
                                         }}
                                         className="w-full px-4 py-3 text-left text-sm text-slate-300 hover:bg-slate-700 hover:text-white transition-colors flex items-center gap-3 border-t border-slate-700/50"
                                     >
@@ -491,7 +612,19 @@ export default function App() {
 
             <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
 
-                <Stats movies={movies} />
+                <Stats
+                    movies={movies}
+                    onToast={(msg, type) => toast[type](msg)}
+                    onSelectPerson={(name) => {
+                        setFilterStatus('全部');
+                        setDateFilter('all');
+                        setFilterCountry('all');
+                        setFilterTag('all');
+                        setSearchTerm(name);
+                        searchInputRef.current?.focus();
+                        toast.info(`已筛选影人：「${name}」`);
+                    }}
+                />
 
                 {/* Filters & Search */}
                 <div className="flex flex-col md:flex-row gap-4 mb-6 sticky top-16 z-20 bg-slate-900/95 p-3 -mx-4 sm:-mx-2 sm:rounded-xl border-y sm:border border-slate-800/50 backdrop-blur-sm shadow-xl shadow-black/20">
@@ -542,12 +675,28 @@ export default function App() {
                                 <div className="relative flex-1">
                                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
                                     <input
+                                        ref={searchInputRef}
                                         type="text"
-                                        placeholder="搜索标题、类型..."
+                                        placeholder="搜索标题、导演、演员、类型、标签..."
                                         value={searchTerm}
                                         onChange={(e) => setSearchTerm(e.target.value)}
-                                        className="w-full bg-slate-800 border border-slate-700 rounded-lg pl-10 pr-4 py-2 text-base sm:text-sm focus:ring-2 focus:ring-indigo-500 outline-none placeholder:text-slate-500 transition-shadow"
+                                        className="w-full bg-slate-800 border border-slate-700 rounded-lg pl-10 pr-20 py-2 text-base sm:text-sm focus:ring-2 focus:ring-indigo-500 outline-none placeholder:text-slate-500 transition-shadow"
                                     />
+                                    <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
+                                        {searchTerm && (
+                                            <button
+                                                type="button"
+                                                onClick={() => { setSearchTerm(''); searchInputRef.current?.focus(); }}
+                                                className="p-1 rounded-md text-slate-400 hover:text-white hover:bg-slate-700 transition-colors"
+                                                title="清空搜索"
+                                            >
+                                                <X size={14} />
+                                            </button>
+                                        )}
+                                        <kbd className="hidden sm:inline-block px-1.5 py-0.5 text-[10px] font-mono text-slate-400 bg-slate-900/90 border border-slate-700 rounded shadow-sm pointer-events-none">
+                                            /
+                                        </kbd>
+                                    </div>
                                 </div>
 
                                 <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1 sm:pb-0">
@@ -623,28 +772,69 @@ export default function App() {
                                         </select>
                                         <ChevronDown size={14} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
                                     </div>
+
+                                    {tagOptions.length > 0 && (
+                                        <div className="relative min-w-[110px] shrink-0">
+                                            <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none">
+                                                <Tag size={14} />
+                                            </div>
+                                            <select
+                                                value={filterTag}
+                                                onChange={(e) => setFilterTag(e.target.value)}
+                                                className="w-full appearance-none bg-slate-800 border border-slate-700 rounded-lg pl-8 pr-7 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none text-slate-300 hover:text-white cursor-pointer transition-colors"
+                                            >
+                                                <option value="all">所有标签</option>
+                                                {tagOptions.map(t => (
+                                                    <option key={t} value={t}>#{t}</option>
+                                                ))}
+                                            </select>
+                                            <ChevronDown size={14} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
+                                        </div>
+                                    )}
                                 </div>
                             </div>
 
-                            <div className="flex gap-2 overflow-x-auto pb-1 md:pb-0 no-scrollbar">
-                                {['全部', ...Object.values(MovieStatus), '多刷'].map((status) => (
+                            <div className="flex items-center justify-between gap-2 overflow-x-auto pb-1 md:pb-0 no-scrollbar touch-pan-x" style={{ WebkitOverflowScrolling: 'touch' }}>
+                                <div className="flex items-center gap-1.5 shrink-0">
+                                    {['全部', ...Object.values(MovieStatus), '多刷'].map((status) => (
+                                        <button
+                                            key={status}
+                                            onClick={() => setFilterStatus(status)}
+                                            className={`px-3 py-1.5 sm:px-3.5 sm:py-1.5 rounded-lg text-xs sm:text-sm font-medium whitespace-nowrap transition-all border touch-manipulation active:scale-95 ${filterStatus === status
+                                                ? 'bg-indigo-600 border-indigo-500 text-white shadow-md shadow-indigo-500/20 font-bold'
+                                                : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700 hover:text-white active:bg-slate-700'
+                                                }`}
+                                        >
+                                            {status}
+                                        </button>
+                                    ))}
+                                </div>
+
+                                {/* View Mode Switcher (Grid vs Poster Wall) */}
+                                <div className="flex items-center bg-slate-800 p-1 rounded-lg border border-slate-700 shrink-0 ml-auto">
                                     <button
-                                        key={status}
-                                        onClick={() => setFilterStatus(status)}
-                                        className={`px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg text-xs sm:text-sm font-medium whitespace-nowrap transition-colors border ${filterStatus === status
-                                            ? 'bg-indigo-600 border-indigo-500 text-white shadow-md shadow-indigo-500/20'
-                                            : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700 hover:text-white'
-                                            }`}
+                                        type="button"
+                                        onClick={() => handleViewModeChange('grid')}
+                                        className={`p-1.5 rounded-md transition-all ${viewMode === 'grid' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
+                                        title="标准卡片模式 (快捷键: 1)"
                                     >
-                                        {status}
+                                        <LayoutGrid size={15} />
                                     </button>
-                                ))}
+                                    <button
+                                        type="button"
+                                        onClick={() => handleViewModeChange('poster')}
+                                        className={`p-1.5 rounded-md transition-all ${viewMode === 'poster' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
+                                        title="海报墙模式 (快捷键: 2)"
+                                    >
+                                        <ImageIcon size={15} />
+                                    </button>
+                                </div>
                             </div>
                         </>
                     )}
                 </div>
 
-                {/* Movie Grid */}
+                {/* Movie Grid / Poster Wall */}
                 {sortedMovies.length === 0 ? (
                     <div className="text-center py-20 border-2 border-dashed border-slate-800 rounded-3xl bg-slate-900/50">
                         <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-slate-800 mb-4">
@@ -652,31 +842,54 @@ export default function App() {
                         </div>
                         <h3 className="text-xl font-medium text-slate-300 mb-2">未找到记录</h3>
                         <p className="text-slate-500 max-w-sm mx-auto mb-6">
-                            {searchTerm || filterStatus !== '全部' || dateFilter !== 'all' || filterCountry !== 'all'
-                                ? "尝试调整搜索、时间、地区或状态筛选条件。"
+                            {searchTerm || filterStatus !== '全部' || dateFilter !== 'all' || filterCountry !== 'all' || filterTag !== 'all'
+                                ? "尝试调整搜索、时间、地区、标签或状态筛选条件。"
                                 : "添加你看过的第一部电影或电视剧吧。"}
                         </p>
-                        {(searchTerm === '' && filterStatus === '全部' && dateFilter === 'all' && filterCountry === 'all') && (
+                        {(searchTerm === '' && filterStatus === '全部' && dateFilter === 'all' && filterCountry === 'all' && filterTag === 'all') && (
                             <Button onClick={() => setIsFormOpen(true)}>添加第一条记录</Button>
                         )}
                     </div>
                 ) : (
                     <>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6">
-                            {currentDisplayedMovies.map(movie => (
-                                <MovieCard
-                                    key={movie.id}
-                                    movie={movie}
-                                    allMovies={movies}
-                                    onEdit={openEdit}
-                                    onDelete={deleteMovie}
-                                    isSelectionMode={isSelectionMode}
-                                    isSelected={selectedIds.has(movie.id)}
-                                    onToggleSelect={toggleSelectMovie}
-                                    onToast={(msg, type) => toast.addToast(msg, type)}
-                                />
-                            ))}
-                        </div>
+                        {viewMode === 'poster' ? (
+                            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 sm:gap-4.5">
+                                {currentDisplayedMovies.map(movie => (
+                                    <PosterWallCard
+                                        key={movie.id}
+                                        movie={movie}
+                                        allMovies={movies}
+                                        onEdit={openEdit}
+                                        onDelete={deleteMovie}
+                                        onQuickEpisodeUpdate={(id, nextEp) => {
+                                            const m = movies.find(x => x.id === id);
+                                            if (m) handleQuickEpisodeUpdate(m, 1);
+                                        }}
+                                        isSelectionMode={isSelectionMode}
+                                        isSelected={selectedIds.has(movie.id)}
+                                        onToggleSelect={toggleSelectMovie}
+                                        onToast={(msg, type) => toast.addToast(msg, type)}
+                                    />
+                                ))}
+                            </div>
+                        ) : (
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6">
+                                {currentDisplayedMovies.map(movie => (
+                                    <MovieCard
+                                        key={movie.id}
+                                        movie={movie}
+                                        allMovies={movies}
+                                        onEdit={openEdit}
+                                        onDelete={deleteMovie}
+                                        onQuickEpisodeUpdate={handleQuickEpisodeUpdate}
+                                        isSelectionMode={isSelectionMode}
+                                        isSelected={selectedIds.has(movie.id)}
+                                        onToggleSelect={toggleSelectMovie}
+                                        onToast={(msg, type) => toast.addToast(msg, type)}
+                                    />
+                                ))}
+                            </div>
+                        )}
 
                         {/* Pagination Controls */}
                         {sortedMovies.length > 0 && (

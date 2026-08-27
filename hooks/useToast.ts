@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef } from 'react';
+import { generateUUID } from '../utils/uuidUtils';
 
 export type ToastType = 'success' | 'error' | 'info' | 'warning';
 
@@ -31,7 +32,7 @@ export const useToast = () => {
         type: ToastType = 'info',
         options?: { duration?: number; action?: Toast['action'] }
     ) => {
-        const id = crypto.randomUUID();
+        const id = generateUUID();
         const duration = options?.duration ?? (type === 'error' ? 5000 : 3000);
 
         const toast: Toast = { id, message, type, duration, action: options?.action };

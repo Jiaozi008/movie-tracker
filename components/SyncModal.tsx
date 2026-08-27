@@ -103,12 +103,17 @@ export const SyncModal: React.FC<SyncModalProps> = ({
   const handleVerify = async () => {
     if (!tempToken) return;
     setIsVerifying(true);
-    const isValid = await verifyToken(tempToken);
+    const result = await verifyToken(tempToken);
     setIsVerifying(false);
 
-    if (isValid) {
+    if (result.isValid) {
       onSaveConfig({ githubToken: tempToken });
       alert('Token 验证通过！已保存。');
+    } else if (result.errorType === 'network') {
+      if (window.confirm('网络连接超时或受阻（GitHub 访问不畅），无法验证 Token。是否直接保存该 Token 并在同步时尝试？')) {
+        onSaveConfig({ githubToken: tempToken });
+        alert('已强制保存 Token。请确保网络环境（如配置代理）能正常访问 GitHub。');
+      }
     } else {
       alert('Token 无效或已过期，请检查权限。');
     }

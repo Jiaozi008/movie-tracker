@@ -3,6 +3,8 @@ import { useState, useEffect, useCallback } from 'react';
 import { Movie } from '../types';
 import { migrateAllMovieStatuses } from '../utils/migrationUtils';
 import { mergeMovies } from '../utils/syncUtils';
+import { savePoster, deletePoster, getAllPosters, cleanupOrphanPosters } from '../utils/posterStorage';
+import { generateUUID } from '../utils/uuidUtils';
 
 const STORAGE_KEY = 'cinelog_movies_v1';
 const DELETED_STORAGE_KEY = 'cinelog_deleted_movies_v1';
@@ -60,6 +62,26 @@ export const useMovies = (callbacks?: UseMoviesCallbacks) => {
 
   const [isSaving, setIsSaving] = useState(false);
 
+  // IndexedDB Poster synchronization on startup
+  useEffect(() => {
+    getAllPosters().then(posterMap => {
+      if (posterMap && Object.keys(posterMap).length > 0) {
+        setMovies(prev => prev.map(m => {
+          if (!m.posterImage && posterMap[m.id]) {
+            return { ...m, posterImage: posterMap[m.id] };
+          }
+          return m;
+        }));
+      }
+      // Backup any base64 poster in memory to IndexedDB
+      movies.forEach(m => {
+        if (m.posterImage && m.posterImage.startsWith('data:image/')) {
+          savePoster(m.id, m.posterImage);
+        }
+      });
+    }).catch(() => {});
+  }, []);
+
   // Real-time Save Effect
   useEffect(() => {
     setIsSaving(true);
@@ -72,16 +94,26 @@ export const useMovies = (callbacks?: UseMoviesCallbacks) => {
   }, [movies]);
 
   const addMovie = useCallback((movieData: Omit<Movie, 'id' | 'lastUpdated'>) => {
+    const newId = generateUUID();
     const newMovie: Movie = {
       ...movieData,
-      id: crypto.randomUUID(),
+      id: newId,
       addedAt: movieData.addedAt || Date.now(),
       lastUpdated: Date.now(),
     };
+
+    if (newMovie.posterImage && newMovie.posterImage.startsWith('data:image/')) {
+      savePoster(newId, newMovie.posterImage);
+    }
+
     setMovies(prev => [newMovie, ...prev]);
   }, []);
 
   const updateMovie = useCallback((movieData: Partial<Movie> & { id: string }) => {
+    if (movieData.posterImage && movieData.posterImage.startsWith('data:image/')) {
+      savePoster(movieData.id, movieData.posterImage);
+    }
+
     setMovies(prev => prev.map(m => m.id === movieData.id ? {
       ...m,
       ...movieData,
@@ -90,6 +122,7 @@ export const useMovies = (callbacks?: UseMoviesCallbacks) => {
   }, []);
 
   const deleteMovie = useCallback((id: string) => {
+    deletePoster(id);
     setMovies(prev => {
       const movieToDelete = prev.find(m => String(m.id) === String(id));
       const newMovies = prev.filter(m => String(m.id) !== String(id));
@@ -111,6 +144,10 @@ export const useMovies = (callbacks?: UseMoviesCallbacks) => {
   }, [callbacks]);
 
   const undoDelete = useCallback((movie: Movie) => {
+    if (movie.posterImage && movie.posterImage.startsWith('data:image/')) {
+      savePoster(movie.id, movie.posterImage);
+    }
+
     setMovies(prev => {
       if (prev.some(m => m.id === movie.id)) return prev;
       
@@ -129,6 +166,8 @@ export const useMovies = (callbacks?: UseMoviesCallbacks) => {
   const bulkDeleteMovies = useCallback((ids: Set<string>) => {
     if (ids.size === 0) return;
     if (window.confirm(`确定要删除选中的 ${ids.size} 条记录吗？此操作无法撤销。`)) {
+      ids.forEach(id => deletePoster(id));
+
       setMovies(prev => {
         const remaining = prev.filter(m => !ids.has(String(m.id)));
         

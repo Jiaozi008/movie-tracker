@@ -1,4 +1,5 @@
 import { resizeImage } from '../utils/imageUtils';
+import { extractSmartTags } from '../utils/tagExtractor';
 
 /**
  * TMDB API Service
@@ -53,6 +54,18 @@ export interface TmdbSearchResult {
     voteAverage: number;
 }
 
+export interface TmdbSeasonInfo {
+    id: number;
+    seasonNumber: number;
+    name: string;
+    episodeCount: number;
+    airDate: string;
+    year: string;
+    posterUrl: string | null;
+    overview: string;
+    voteAverage: number;
+}
+
 export interface TmdbDetailResult {
     id: number;
     title: string;
@@ -64,11 +77,15 @@ export interface TmdbDetailResult {
     cast: string;               // Top cast members, comma-separated
     overview: string;
     posterUrl: string | null;
+    posterOptions?: string[];   // Multiple poster options
     mediaType: 'movie' | 'tv';
     duration: number;           // minutes (per-episode for TV)
     totalEpisodes: number | null;
     voteAverage: number;
     platform?: string;
+    seasons?: TmdbSeasonInfo[];
+    selectedSeason?: TmdbSeasonInfo;
+    tags?: string[];
 }
 
 const PROVIDER_MAP: Record<string, string> = {
@@ -140,7 +157,8 @@ export async function getMovieDetails(movieId: number): Promise<TmdbDetailResult
     const params = new URLSearchParams({
         api_key: apiKey,
         language: 'zh-CN',
-        append_to_response: 'credits,watch/providers'
+        append_to_response: 'credits,watch/providers,images,keywords',
+        include_image_language: 'zh,en,null'
     });
 
     const res = await fetch(`${TMDB_BASE}/movie/${movieId}?${params}`);
@@ -152,12 +170,29 @@ export async function getMovieDetails(movieId: number): Promise<TmdbDetailResult
     const castList = (d.credits?.cast || []).slice(0, 5).map((c: any) => c.name).join(', ');
     const countries = (d.production_countries || []).map((c: any) => translateCountry(c.iso_3166_1, c.name)).join(', ');
     const genres = (d.genres || []).map((g: any) => g.name).join(', ');
+    const keywords = (d.keywords?.keywords || []).map((k: any) => k.name || '').filter(Boolean);
 
     // Extract platform from watch providers (prioritize CN then US then first available)
     const providers = d['watch/providers']?.results || {};
     const regionData = providers.CN || providers.US || Object.values(providers)[0] || {};
     const flatStreamers = (regionData.flatrate || []).map((p: any) => PROVIDER_MAP[p.provider_name] || p.provider_name);
     const platform = flatStreamers[0] || '';
+
+    // Multiple posters
+    const posterOptions: string[] = (d.images?.posters || [])
+        .slice(0, 8)
+        .map((p: any) => getPosterUrl(p.file_path, 'w500'))
+        .filter(Boolean) as string[];
+
+    const autoTags = extractSmartTags({
+        title: d.title || d.original_title,
+        genre: genres,
+        overview: d.overview || '',
+        country: countries,
+        voteAverage: d.vote_average || 0,
+        keywords,
+        mediaType: 'movie'
+    });
 
     return {
         id: d.id,
@@ -170,11 +205,13 @@ export async function getMovieDetails(movieId: number): Promise<TmdbDetailResult
         cast: castList,
         overview: d.overview || '',
         posterUrl: getPosterUrl(d.poster_path, 'w500'),
+        posterOptions: posterOptions.length > 0 ? posterOptions : undefined,
         mediaType: 'movie',
         duration: d.runtime || 0,
         totalEpisodes: null,
         voteAverage: d.vote_average || 0,
         platform,
+        tags: autoTags,
     };
 }
 
@@ -186,7 +223,8 @@ export async function getTvDetails(tvId: number): Promise<TmdbDetailResult> {
     const params = new URLSearchParams({
         api_key: apiKey,
         language: 'zh-CN',
-        append_to_response: 'credits,watch/providers'
+        append_to_response: 'credits,watch/providers,images,keywords',
+        include_image_language: 'zh,en,null'
     });
 
     const res = await fetch(`${TMDB_BASE}/tv/${tvId}?${params}`);
@@ -199,6 +237,8 @@ export async function getTvDetails(tvId: number): Promise<TmdbDetailResult> {
     const castList = (d.credits?.cast || []).slice(0, 5).map((c: any) => c.name).join(', ');
     const countries = (d.origin_country || []).map((code: string) => translateCountry(code)).join(', ');
     const genres = (d.genres || []).map((g: any) => g.name).join(', ');
+    const keywords = (d.keywords?.results || []).map((k: any) => k.name || '').filter(Boolean);
+
     // 优先从 episode_run_time 取，新版 TMDB API 该字段经常为空
     // 回退到 last_episode_to_air.runtime 或 next_episode_to_air.runtime
     const episodeRuntime = (d.episode_run_time || [])[0]
@@ -212,6 +252,38 @@ export async function getTvDetails(tvId: number): Promise<TmdbDetailResult> {
     const flatStreamers = (regionData.flatrate || []).map((p: any) => PROVIDER_MAP[p.provider_name] || p.provider_name);
     const platform = flatStreamers[0] || '';
 
+    // 解析分季列表（排除第 0 季特别篇，按季数正序排序）
+    const seasons: TmdbSeasonInfo[] = (d.seasons || [])
+        .filter((s: any) => s.season_number > 0)
+        .map((s: any) => ({
+            id: s.id,
+            seasonNumber: s.season_number,
+            name: s.name || `第 ${s.season_number} 季`,
+            episodeCount: s.episode_count || 0,
+            airDate: s.air_date || '',
+            year: s.air_date ? s.air_date.substring(0, 4) : '',
+            posterUrl: getPosterUrl(s.poster_path, 'w500'),
+            overview: s.overview || '',
+            voteAverage: s.vote_average || 0,
+        }))
+        .sort((a: TmdbSeasonInfo, b: TmdbSeasonInfo) => a.seasonNumber - b.seasonNumber);
+
+    // Multiple posters
+    const posterOptions: string[] = (d.images?.posters || [])
+        .slice(0, 8)
+        .map((p: any) => getPosterUrl(p.file_path, 'w500'))
+        .filter(Boolean) as string[];
+
+    const autoTags = extractSmartTags({
+        title: d.name || d.original_name,
+        genre: genres,
+        overview: d.overview || '',
+        country: countries,
+        voteAverage: d.vote_average || 0,
+        keywords,
+        mediaType: 'tv'
+    });
+
     return {
         id: d.id,
         title: d.name || d.original_name,
@@ -223,11 +295,14 @@ export async function getTvDetails(tvId: number): Promise<TmdbDetailResult> {
         cast: castList,
         overview: d.overview || '',
         posterUrl: getPosterUrl(d.poster_path, 'w500'),
+        posterOptions: posterOptions.length > 0 ? posterOptions : undefined,
         mediaType: 'tv',
         duration: episodeRuntime,
         totalEpisodes: d.number_of_episodes || null,
         voteAverage: d.vote_average || 0,
         platform,
+        seasons: seasons.length > 0 ? seasons : undefined,
+        tags: autoTags,
     };
 }
 

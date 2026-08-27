@@ -6,36 +6,52 @@ import {
     Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis
 } from 'recharts';
 import { Movie, MovieStatus } from '../types';
-import { Film, Tv, PlayCircle, Calendar, Filter, BarChart3, PieChart as PieChartIcon, Activity, Star, Hexagon, Clock, Zap, Smile } from 'lucide-react';
+import { Film, Tv, PlayCircle, Calendar, Filter, BarChart3, PieChart as PieChartIcon, Activity, Star, Hexagon, Clock, Zap, Smile, Sparkles, Tag, Clapperboard, Users, User } from 'lucide-react';
 import {
     calculateMovieDuration,
     calculateTvDuration,
     calculateTotalEpisodes
 } from '../utils/statsCalculator';
 import { normalizeTitle } from '../utils/titleNormalizer';
+import { ActivityHeatmap } from './ActivityHeatmap';
+import { ReportShareModal } from './ReportShareModal';
 
 interface StatsProps {
     movies: Movie[];
+    onToast?: (msg: string, type: 'success' | 'error' | 'info' | 'warning') => void;
+    onSelectPerson?: (name: string) => void;
 }
 
 type TimeFrame = 'all' | 'year' | 'month';
 
-export const Stats: React.FC<StatsProps> = ({ movies }) => {
+export const Stats: React.FC<StatsProps> = ({ movies, onToast, onSelectPerson }) => {
     const [timeFrame, setTimeFrame] = useState<TimeFrame>('all');
     const [selectedYear, setSelectedYear] = useState<string>(new Date().getFullYear().toString());
     const [selectedMonth, setSelectedMonth] = useState<string>(
         `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`
     );
+    const [showReportModal, setShowReportModal] = useState(false);
 
-    // 1. Extract available dates for dropdowns
+    // 1. Extract available dates for dropdowns (including watchHistory timestamps)
     const { years, months } = useMemo(() => {
         const yearsSet = new Set<string>();
         const monthsSet = new Set<string>();
 
         movies.forEach(m => {
-            const d = new Date(m.addedAt);
-            yearsSet.add(d.getFullYear().toString());
-            monthsSet.add(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+            if (m.addedAt) {
+                const d = new Date(m.addedAt);
+                yearsSet.add(d.getFullYear().toString());
+                monthsSet.add(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+            }
+            if (m.watchHistory && Array.isArray(m.watchHistory)) {
+                m.watchHistory.forEach(log => {
+                    if (log.date) {
+                        const d = new Date(log.date);
+                        yearsSet.add(d.getFullYear().toString());
+                        monthsSet.add(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+                    }
+                });
+            }
         });
 
         return {
@@ -44,17 +60,27 @@ export const Stats: React.FC<StatsProps> = ({ movies }) => {
         };
     }, [movies]);
 
-    // 2. Filter Data based on selection
+    // 2. Filter Data based on selection (check both addedAt and watchHistory)
     const filteredMovies = useMemo(() => {
         return movies.filter(movie => {
-            const d = new Date(movie.addedAt);
             if (timeFrame === 'all') return true;
+
+            const hasWatchHistoryInYear = movie.watchHistory && movie.watchHistory.some(log => {
+                return new Date(log.date).getFullYear().toString() === selectedYear;
+            });
+            const hasWatchHistoryInMonth = movie.watchHistory && movie.watchHistory.some(log => {
+                const logDate = new Date(log.date);
+                const logYM = `${logDate.getFullYear()}-${String(logDate.getMonth() + 1).padStart(2, '0')}`;
+                return logYM === selectedMonth;
+            });
+
+            const d = new Date(movie.addedAt);
             if (timeFrame === 'year') {
-                return d.getFullYear().toString() === selectedYear;
+                return d.getFullYear().toString() === selectedYear || !!hasWatchHistoryInYear;
             }
             if (timeFrame === 'month') {
                 const movieMonth = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-                return movieMonth === selectedMonth;
+                return movieMonth === selectedMonth || !!hasWatchHistoryInMonth;
             }
             return true;
         });
@@ -74,10 +100,13 @@ export const Stats: React.FC<StatsProps> = ({ movies }) => {
         ratingData,
         trendData,
         genreData,
+        tagData,
         rewatchRate,
         rewatchKing,
         speedDemon,
-        judgePersona
+        judgePersona,
+        directorRankings,
+        castRankings
     } = useMemo(() => {
         // Create an array of unique media entities for aggregate statistics (Genres, Status, etc.)
         // This ensures TV shows with multiple episode records don't skew distribution data
@@ -146,11 +175,11 @@ export const Stats: React.FC<StatsProps> = ({ movies }) => {
         // Movie Duration
         const movieDuration = calculateMovieDuration(filteredMovies);
 
-        // TV Episodes watched count (deduplicated by utility with global context)
-        const totalEpisodesWatched = calculateTotalEpisodes(filteredMovies, movies);
+        // TV Episodes watched count (deduplicated by utility with global context and precise timeFilter)
+        const totalEpisodesWatched = calculateTotalEpisodes(filteredMovies, movies, { timeFrame, selectedYear, selectedMonth });
 
-        // TV Duration (calculated by utility with dedup logic and global context)
-        const tvDuration = calculateTvDuration(filteredMovies, movies);
+        // TV Duration (calculated by utility with dedup logic, global context and precise timeFilter)
+        const tvDuration = calculateTvDuration(filteredMovies, movies, { timeFrame, selectedYear, selectedMonth });
 
         // Total Duration formatting
         const totalMinutes = movieDuration + tvDuration;
@@ -158,7 +187,7 @@ export const Stats: React.FC<StatsProps> = ({ movies }) => {
         const mins = totalMinutes % 60;
         const totalDurationFormatted = { hours, minutes: mins };
 
-        // Trend Data (Timeline) - Must use all records to show activity over time
+        // Trend Data (Timeline) - Must use all records and watchHistory to show activity over time
         let trendMap = new Map<string, number>();
         let trendFormat: { label: string, key: string }[] = [];
 
@@ -170,23 +199,58 @@ export const Stats: React.FC<StatsProps> = ({ movies }) => {
                 trendMap.set(i.toString(), 0);
             }
             filteredMovies.filter(mov => mov.status !== MovieStatus.PLANNING).forEach(mov => {
-                const d = new Date(mov.addedAt);
-                trendMap.set(d.getDate().toString(), (trendMap.get(d.getDate().toString()) || 0) + 1);
+                if (mov.mediaType === 'tv' && mov.watchHistory && mov.watchHistory.length > 0) {
+                    mov.watchHistory.forEach(log => {
+                        const logDate = new Date(log.date);
+                        const logYM = `${logDate.getFullYear()}-${String(logDate.getMonth() + 1).padStart(2, '0')}`;
+                        if (logYM === selectedMonth) {
+                            const key = logDate.getDate().toString();
+                            trendMap.set(key, (trendMap.get(key) || 0) + 1);
+                        }
+                    });
+                } else {
+                    const d = new Date(mov.addedAt);
+                    const movieYM = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+                    if (movieYM === selectedMonth) {
+                        const key = d.getDate().toString();
+                        trendMap.set(key, (trendMap.get(key) || 0) + 1);
+                    }
+                }
             });
             trendFormat = Array.from(trendMap.keys()).map(k => ({ label: `${k}日`, key: k }));
         } else if (timeFrame === 'year') {
             // Monthly trend
             for (let i = 1; i <= 12; i++) trendMap.set(i.toString(), 0);
             filteredMovies.filter(mov => mov.status !== MovieStatus.PLANNING).forEach(mov => {
-                const d = new Date(mov.addedAt);
-                trendMap.set((d.getMonth() + 1).toString(), (trendMap.get((d.getMonth() + 1).toString()) || 0) + 1);
+                if (mov.mediaType === 'tv' && mov.watchHistory && mov.watchHistory.length > 0) {
+                    mov.watchHistory.forEach(log => {
+                        const logDate = new Date(log.date);
+                        if (logDate.getFullYear().toString() === selectedYear) {
+                            const key = (logDate.getMonth() + 1).toString();
+                            trendMap.set(key, (trendMap.get(key) || 0) + 1);
+                        }
+                    });
+                } else {
+                    const d = new Date(mov.addedAt);
+                    if (d.getFullYear().toString() === selectedYear) {
+                        const key = (d.getMonth() + 1).toString();
+                        trendMap.set(key, (trendMap.get(key) || 0) + 1);
+                    }
+                }
             });
             trendFormat = Array.from(trendMap.keys()).map(k => ({ label: `${k}月`, key: k }));
         } else {
             // Yearly trend
             filteredMovies.filter(mov => mov.status !== MovieStatus.PLANNING).forEach(mov => {
-                const y = new Date(mov.addedAt).getFullYear().toString();
-                trendMap.set(y, (trendMap.get(y) || 0) + 1);
+                if (mov.mediaType === 'tv' && mov.watchHistory && mov.watchHistory.length > 0) {
+                    mov.watchHistory.forEach(log => {
+                        const y = new Date(log.date).getFullYear().toString();
+                        trendMap.set(y, (trendMap.get(y) || 0) + 1);
+                    });
+                } else {
+                    const y = new Date(mov.addedAt).getFullYear().toString();
+                    trendMap.set(y, (trendMap.get(y) || 0) + 1);
+                }
             });
             // Sort years
             const sortedYears = Array.from(trendMap.keys()).sort();
@@ -198,15 +262,12 @@ export const Stats: React.FC<StatsProps> = ({ movies }) => {
             count: trendMap.get(item.key) || 0
         }));
 
-        // Genre Data - Use unique entities
+        // Genre Data - Use unique entities (排除未知与空类型)
         const genreCounts: Record<string, number> = {};
         uniqueMediaEntities.forEach(m => {
-            if (!m.genre) {
-                genreCounts['未知'] = (genreCounts['未知'] || 0) + 1;
-                return;
-            }
+            if (!m.genre || m.genre.trim() === '未知') return;
             // Split by common separators: , / space，
-            const genres = m.genre.split(/[,，/、\s]+/).filter(g => g.trim().length > 0);
+            const genres = m.genre.split(/[,，/、\s]+/).filter(g => g.trim().length > 0 && g.trim() !== '未知');
             genres.forEach(g => {
                 genreCounts[g] = (genreCounts[g] || 0) + 1;
             });
@@ -216,6 +277,24 @@ export const Stats: React.FC<StatsProps> = ({ movies }) => {
             .map(([name, value]) => ({ name, value }))
             .sort((a, b) => b.value - a.value)
             .slice(0, 8); // Top 8 genres
+
+        // Tag Data - 仅统计用户与智能打上的自定义标签 (m.tags)，绝不混入或回退到类型 (genre)
+        const tagCounts: Record<string, number> = {};
+        uniqueMediaEntities.forEach(m => {
+            if (m.tags && Array.isArray(m.tags) && m.tags.length > 0) {
+                m.tags.forEach(t => {
+                    const cleanTag = t.trim();
+                    if (cleanTag && cleanTag !== '未知') {
+                        tagCounts[cleanTag] = (tagCounts[cleanTag] || 0) + 1;
+                    }
+                });
+            }
+        });
+
+        const tagData = Object.entries(tagCounts)
+            .map(([name, value]) => ({ name, value }))
+            .sort((a, b) => b.value - a.value)
+            .slice(0, 8); // Top 8 tags
 
         // 4. 重温指标计算
         // 独特已观影作品列表 (排除想看)
@@ -286,11 +365,64 @@ export const Stats: React.FC<StatsProps> = ({ movies }) => {
             else judgePersona = '理性影迷 ⚖️';
         }
 
+        // 5. 导演与演员偏好度聚合计算 (Top 5)
+        const directorMap = new Map<string, { count: number; ratings: number[]; titles: string[] }>();
+        const castMap = new Map<string, { count: number; ratings: number[]; titles: string[] }>();
+
+        uniqueMediaEntities.forEach(m => {
+            if (m.director && m.director.trim() && m.director.trim() !== '未知') {
+                const dirs = m.director.split(/[,，/、\s]+/).map(d => d.trim()).filter(d => d.length > 0 && d !== '未知');
+                dirs.forEach(d => {
+                    const cur = directorMap.get(d) || { count: 0, ratings: [], titles: [] };
+                    cur.count += 1;
+                    if (m.rating > 0) cur.ratings.push(m.rating);
+                    if (m.title && !cur.titles.includes(m.title)) cur.titles.push(m.title);
+                    directorMap.set(d, cur);
+                });
+            }
+
+            if (m.cast && m.cast.trim() && m.cast.trim() !== '未知') {
+                const actors = m.cast.split(/[,，/、\s]+/).map(a => a.trim()).filter(a => a.length > 0 && a !== '未知');
+                actors.forEach(a => {
+                    const cur = castMap.get(a) || { count: 0, ratings: [], titles: [] };
+                    cur.count += 1;
+                    if (m.rating > 0) cur.ratings.push(m.rating);
+                    if (m.title && !cur.titles.includes(m.title)) cur.titles.push(m.title);
+                    castMap.set(a, cur);
+                });
+            }
+        });
+
+        const directorRankings = Array.from(directorMap.entries())
+            .map(([name, data]) => ({
+                name,
+                count: data.count,
+                avgRating: data.ratings.length > 0
+                    ? Number((data.ratings.reduce((a, b) => a + b, 0) / data.ratings.length).toFixed(1))
+                    : 0,
+                topTitle: data.titles[0] || ''
+            }))
+            .sort((a, b) => b.count - a.count || b.avgRating - a.avgRating)
+            .slice(0, 5);
+
+        const castRankings = Array.from(castMap.entries())
+            .map(([name, data]) => ({
+                name,
+                count: data.count,
+                avgRating: data.ratings.length > 0
+                    ? Number((data.ratings.reduce((a, b) => a + b, 0) / data.ratings.length).toFixed(1))
+                    : 0,
+                topTitle: data.titles[0] || ''
+            }))
+            .sort((a, b) => b.count - a.count || b.avgRating - a.avgRating)
+            .slice(0, 5);
+
         return {
             total, movieCount, tvCount, totalEpisodesWatched,
             movieDuration, tvDuration, totalDurationFormatted, avgRating,
-            statusData, ratingData, trendData, genreData,
-            rewatchRate, rewatchKing, speedDemon, judgePersona
+            statusData, ratingData, trendData, genreData, tagData,
+            rewatchRate, rewatchKing, speedDemon, judgePersona,
+            directorRankings, castRankings
         };
     }, [filteredMovies, movies, timeFrame, selectedMonth, selectedYear]);
 
@@ -311,7 +443,17 @@ export const Stats: React.FC<StatsProps> = ({ movies }) => {
                     <h2 className="text-base sm:text-lg font-bold text-white">统计面板</h2>
                 </div>
 
-                <div className="flex flex-wrap gap-2 w-full sm:w-auto">
+                <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+                    <button
+                        type="button"
+                        onClick={() => setShowReportModal(true)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 transition-all hover:scale-105 shadow-sm"
+                        title="一键生成高清观影手账报告长图"
+                    >
+                        <Sparkles size={14} className="text-indigo-400 animate-pulse" />
+                        生成观影长图
+                    </button>
+
                     <div className="flex bg-slate-900 p-1 rounded-lg border border-slate-700 shrink-0">
                         <button
                             onClick={() => setTimeFrame('all')}
@@ -472,6 +614,9 @@ export const Stats: React.FC<StatsProps> = ({ movies }) => {
                 </div>
             </div>
 
+            {/* Activity Heatmap */}
+            <ActivityHeatmap movies={movies} />
+
             {/* 3. Charts Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
 
@@ -505,50 +650,65 @@ export const Stats: React.FC<StatsProps> = ({ movies }) => {
                     </div>
                 </div>
 
-                {/* Chart B: Genre Preference */}
-                <div className="bg-slate-800 p-3 sm:p-4 rounded-xl border border-slate-700 shadow-lg min-h-[250px]">
+                {/* Chart B: Tag Preference */}
+                <div className="bg-slate-800 p-3 sm:p-4 rounded-xl border border-slate-700 shadow-lg min-h-[250px] flex flex-col justify-between">
                     <div className="flex items-center gap-2 mb-4">
-                        <Filter size={16} className="text-emerald-400" />
-                        <h3 className="text-sm font-medium text-slate-300">类型偏好 Top 8</h3>
+                        <Tag size={16} className="text-emerald-400" />
+                        <h3 className="text-sm font-medium text-slate-300">标签偏好 Top 8</h3>
                     </div>
-                    <div className="h-[200px] w-full">
-                        <ResponsiveContainer width="100%" height="100%">
-                            <BarChart layout="vertical" data={genreData} margin={{ top: 5, right: 30, left: 10, bottom: 5 }}>
-                                <XAxis type="number" hide />
-                                <YAxis dataKey="name" type="category" stroke="#94a3b8" tick={{ fontSize: 11 }} width={50} axisLine={false} tickLine={false} />
-                                <Tooltip
-                                    cursor={{ fill: '#334155' }}
-                                    contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '8px', color: '#fff' }}
-                                />
-                                <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={12}>
-                                    {genreData.map((entry, index) => (
-                                        <Cell key={`cell-${index}`} fill={CHART_COLORS[index % CHART_COLORS.length]} />
-                                    ))}
-                                </Bar>
-                            </BarChart>
-                        </ResponsiveContainer>
-                    </div>
+                    {tagData.length > 0 ? (
+                        <div className="h-[200px] w-full">
+                            <ResponsiveContainer width="100%" height="100%">
+                                <BarChart layout="vertical" data={tagData} margin={{ top: 5, right: 30, left: 10, bottom: 5 }}>
+                                    <XAxis type="number" hide />
+                                    <YAxis dataKey="name" type="category" stroke="#94a3b8" tick={{ fontSize: 11 }} width={65} axisLine={false} tickLine={false} />
+                                    <Tooltip
+                                        cursor={{ fill: '#334155' }}
+                                        contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '8px', color: '#fff' }}
+                                    />
+                                    <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={12}>
+                                        {tagData.map((entry, index) => (
+                                            <Cell key={`cell-${index}`} fill={CHART_COLORS[index % CHART_COLORS.length]} />
+                                        ))}
+                                    </Bar>
+                                </BarChart>
+                            </ResponsiveContainer>
+                        </div>
+                    ) : (
+                        <div className="h-[200px] w-full flex flex-col items-center justify-center text-slate-500 text-xs gap-2">
+                            <Tag size={24} className="text-slate-600" />
+                            <span>暂无自定义标签数据</span>
+                            <span className="text-[11px] text-slate-600">在新增或编辑影视时打上标签即可展示</span>
+                        </div>
+                    )}
                 </div>
 
                 {/* Chart C: Genre Distribution */}
-                <div className="bg-slate-800 p-3 sm:p-4 rounded-xl border border-slate-700 shadow-lg min-h-[250px]">
+                <div className="bg-slate-800 p-3 sm:p-4 rounded-xl border border-slate-700 shadow-lg min-h-[250px] flex flex-col justify-between">
                     <div className="flex items-center gap-2 mb-4">
                         <Hexagon size={16} className="text-purple-400" />
                         <h3 className="text-sm font-medium text-slate-300">类型分布</h3>
                     </div>
-                    <div className="h-[200px] w-full">
-                        <ResponsiveContainer width="100%" height="100%">
-                            <RadarChart cx="50%" cy="50%" outerRadius="70%" data={genreData}>
-                                <PolarGrid stroke="#334155" />
-                                <PolarAngleAxis dataKey="name" tick={{ fill: '#94a3b8', fontSize: 10 }} />
-                                <PolarRadiusAxis angle={30} domain={[0, 'auto']} tick={false} axisLine={false} />
-                                <Radar name="数量" dataKey="value" stroke="#a855f7" fill="#a855f7" fillOpacity={0.5} />
-                                <Tooltip
-                                    contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '8px', color: '#fff' }}
-                                />
-                            </RadarChart>
-                        </ResponsiveContainer>
-                    </div>
+                    {genreData.length > 0 ? (
+                        <div className="h-[200px] w-full">
+                            <ResponsiveContainer width="100%" height="100%">
+                                <RadarChart cx="50%" cy="50%" outerRadius="70%" data={genreData}>
+                                    <PolarGrid stroke="#334155" />
+                                    <PolarAngleAxis dataKey="name" tick={{ fill: '#94a3b8', fontSize: 10 }} />
+                                    <PolarRadiusAxis angle={30} domain={[0, 'auto']} tick={false} axisLine={false} />
+                                    <Radar name="数量" dataKey="value" stroke="#a855f7" fill="#a855f7" fillOpacity={0.5} />
+                                    <Tooltip
+                                        contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '8px', color: '#fff' }}
+                                    />
+                                </RadarChart>
+                            </ResponsiveContainer>
+                        </div>
+                    ) : (
+                        <div className="h-[200px] w-full flex flex-col items-center justify-center text-slate-500 text-xs gap-2">
+                            <Hexagon size={24} className="text-slate-600" />
+                            <span>暂无有效类型数据</span>
+                        </div>
+                    )}
                 </div>
 
                 {/* Chart D: Status Distribution */}
@@ -611,6 +771,134 @@ export const Stats: React.FC<StatsProps> = ({ movies }) => {
                 </div>
 
             </div>
+
+            {/* 3. 影人阵容排行榜 (Director & Cast Top 5) */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* 导演偏好 Top 5 */}
+                <div className="bg-slate-800 p-4 rounded-xl border border-slate-700 shadow-lg">
+                    <div className="flex items-center justify-between mb-3.5">
+                        <div className="flex items-center gap-2">
+                            <div className="p-1.5 rounded-lg bg-indigo-500/15 text-indigo-400 border border-indigo-500/25">
+                                <Clapperboard size={16} />
+                            </div>
+                            <div>
+                                <h3 className="text-sm font-bold text-white flex items-center gap-1.5">
+                                    🎬 最常看导演 Top 5
+                                </h3>
+                                <p className="text-[11px] text-slate-400">点击导演名快速在主列表反向检索</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    {directorRankings.length > 0 ? (
+                        <div className="space-y-2">
+                            {directorRankings.map((d, idx) => (
+                                <div
+                                    key={d.name}
+                                    onClick={() => onSelectPerson && onSelectPerson(d.name)}
+                                    className="group flex items-center justify-between p-2.5 rounded-lg bg-slate-900/60 hover:bg-indigo-950/40 border border-slate-700/60 hover:border-indigo-500/40 cursor-pointer transition-all duration-200"
+                                    title={`点击检索「${d.name}」名下的所有影视作品`}
+                                >
+                                    <div className="flex items-center gap-2.5 min-w-0">
+                                        <span className={`inline-flex items-center justify-center w-5 h-5 rounded-full text-[11px] font-black shrink-0 ${
+                                            idx === 0 ? 'bg-amber-400/20 text-amber-300 border border-amber-400/40' :
+                                            idx === 1 ? 'bg-slate-300/20 text-slate-200 border border-slate-300/40' :
+                                            idx === 2 ? 'bg-amber-700/20 text-amber-500 border border-amber-600/40' :
+                                            'bg-slate-800 text-slate-400 border border-slate-700'
+                                        }`}>
+                                            {idx + 1}
+                                        </span>
+                                        <span className="text-sm font-medium text-slate-200 group-hover:text-indigo-300 transition-colors truncate">
+                                            {d.name}
+                                        </span>
+                                    </div>
+
+                                    <div className="flex items-center gap-3 shrink-0 text-xs">
+                                        <span className="text-slate-400 font-medium">{d.count} 部作品</span>
+                                        {d.avgRating > 0 && (
+                                            <span className="inline-flex items-center gap-0.5 text-amber-400 font-bold bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/25">
+                                                ★ {d.avgRating}
+                                            </span>
+                                        )}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    ) : (
+                        <div className="py-8 text-center text-slate-500 text-xs flex flex-col items-center gap-1.5">
+                            <Clapperboard size={20} className="text-slate-600" />
+                            <span>暂无导演统计数据</span>
+                        </div>
+                    )}
+                </div>
+
+                {/* 主演偏好 Top 5 */}
+                <div className="bg-slate-800 p-4 rounded-xl border border-slate-700 shadow-lg">
+                    <div className="flex items-center justify-between mb-3.5">
+                        <div className="flex items-center gap-2">
+                            <div className="p-1.5 rounded-lg bg-pink-500/15 text-pink-400 border border-pink-500/25">
+                                <Users size={16} />
+                            </div>
+                            <div>
+                                <h3 className="text-sm font-bold text-white flex items-center gap-1.5">
+                                    🎭 最喜爱主演 Top 5
+                                </h3>
+                                <p className="text-[11px] text-slate-400">点击演员名快速在主列表反向检索</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    {castRankings.length > 0 ? (
+                        <div className="space-y-2">
+                            {castRankings.map((c, idx) => (
+                                <div
+                                    key={c.name}
+                                    onClick={() => onSelectPerson && onSelectPerson(c.name)}
+                                    className="group flex items-center justify-between p-2.5 rounded-lg bg-slate-900/60 hover:bg-pink-950/40 border border-slate-700/60 hover:border-pink-500/40 cursor-pointer transition-all duration-200"
+                                    title={`点击检索「${c.name}」参演的所有影视作品`}
+                                >
+                                    <div className="flex items-center gap-2.5 min-w-0">
+                                        <span className={`inline-flex items-center justify-center w-5 h-5 rounded-full text-[11px] font-black shrink-0 ${
+                                            idx === 0 ? 'bg-amber-400/20 text-amber-300 border border-amber-400/40' :
+                                            idx === 1 ? 'bg-slate-300/20 text-slate-200 border border-slate-300/40' :
+                                            idx === 2 ? 'bg-amber-700/20 text-amber-500 border border-amber-600/40' :
+                                            'bg-slate-800 text-slate-400 border border-slate-700'
+                                        }`}>
+                                            {idx + 1}
+                                        </span>
+                                        <span className="text-sm font-medium text-slate-200 group-hover:text-pink-300 transition-colors truncate">
+                                            {c.name}
+                                        </span>
+                                    </div>
+
+                                    <div className="flex items-center gap-3 shrink-0 text-xs">
+                                        <span className="text-slate-400 font-medium">{c.count} 部作品</span>
+                                        {c.avgRating > 0 && (
+                                            <span className="inline-flex items-center gap-0.5 text-amber-400 font-bold bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/25">
+                                                ★ {c.avgRating}
+                                            </span>
+                                        )}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    ) : (
+                        <div className="py-8 text-center text-slate-500 text-xs flex flex-col items-center gap-1.5">
+                            <Users size={20} className="text-slate-600" />
+                            <span>暂无主演阵容数据</span>
+                        </div>
+                    )}
+                </div>
+            </div>
+
+            {/* Annual/Monthly Report Share Modal */}
+            {showReportModal && (
+                <ReportShareModal
+                    movies={movies}
+                    onClose={() => setShowReportModal(false)}
+                    onToast={onToast}
+                />
+            )}
         </div>
     );
 };

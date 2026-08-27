@@ -1,6 +1,7 @@
 import { Movie, GeminiMovieResponse } from "../types";
 
 const PROXY_URL = import.meta.env.VITE_API_PROXY || '/api/gemini';
+const PROXY_STREAM_URL = import.meta.env.VITE_API_PROXY ? `${import.meta.env.VITE_API_PROXY}/stream` : '/api/gemini/stream';
 
 async function fetchFromProxy(payload: any) {
   const res = await fetch(PROXY_URL, {
@@ -18,8 +19,76 @@ async function fetchFromProxy(payload: any) {
   return data.text;
 }
 
+export async function fetchStreamFromProxy(
+  payload: { model?: string; contents: string },
+  onChunk?: (accumulatedText: string, latestChunk: string) => void
+): Promise<string> {
+  try {
+    const res = await fetch(PROXY_STREAM_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    if (!res.ok || !res.body) {
+      const fallbackText = await fetchFromProxy(payload);
+      if (onChunk) onChunk(fallbackText, fallbackText);
+      return fallbackText;
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let fullText = '';
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || !trimmed.startsWith('data:')) continue;
+        const jsonStr = trimmed.replace(/^data:\s*/, '');
+        if (jsonStr === '[DONE]') continue;
+
+        try {
+          const parsed = JSON.parse(jsonStr);
+          if (parsed.error) {
+            console.warn('Stream chunk error:', parsed.error);
+            continue;
+          }
+          const chunkText = parsed?.candidates?.[0]?.content?.parts?.[0]?.text;
+          if (chunkText) {
+            fullText += chunkText;
+            if (onChunk) {
+              onChunk(fullText, chunkText);
+            }
+          }
+        } catch {
+          // Ignore non-json lines
+        }
+      }
+    }
+
+    if (!fullText) {
+      return await fetchFromProxy(payload);
+    }
+
+    return fullText;
+  } catch (err) {
+    console.warn('Streaming fetch fallback to standard fetch:', err);
+    const fallbackText = await fetchFromProxy(payload);
+    if (onChunk) onChunk(fallbackText, fallbackText);
+    return fallbackText;
+  }
+}
+
 export const fetchMovieMetadata = async (title: string): Promise<GeminiMovieResponse> => {
-  const contents = `Provide metadata for the media title "${title}". Identify if it is a "movie" or "tv" series. Return JSON. ensure the summary, genre, country and director are in Chinese (Simplified). If it is a TV series, estimate the total number of episodes and the average runtime per episode (in minutes). If it is a movie, provide the runtime (in minutes).`;
+  const contents = `Provide metadata for the media title "${title}". Identify if it is a "movie" or "tv" series. Return JSON. ensure the summary, genre, country and director are in Chinese (Simplified). Include 2-4 concise, catchy Chinese tags (such as "悬疑烧脑", "温暖治愈", "赛博朋克", "高分神作") in the "tags" array field. If it is a TV series, estimate the total number of episodes and the average runtime per episode (in minutes). If it is a movie, provide the runtime (in minutes).`;
 
   // We specify these because we want JSON parsing
   const responseText = await fetchFromProxy({
@@ -40,15 +109,27 @@ export const fetchMovieMetadata = async (title: string): Promise<GeminiMovieResp
   }
 };
 
-export const generateAiReview = async (title: string, rating: number, mediaType: string = 'movie'): Promise<string> => {
+export const generateAiReview = async (
+  title: string,
+  rating: number,
+  mediaType: string = 'movie',
+  onChunk?: (accumulatedText: string, latestChunk: string) => void
+): Promise<string> => {
   const typeText = mediaType === 'tv' ? "TV series" : "movie";
   const contents = `Write a short, casual, 2-sentence review for the ${typeText} "${title}" in Chinese (Simplified) giving it a rating of ${rating}/5 stars. Focus on the vibe.`;
+
+  if (onChunk) {
+    return await fetchStreamFromProxy({
+      model: "gemini-2.5-flash",
+      contents
+    }, onChunk);
+  }
 
   return await fetchFromProxy({
     model: "gemini-2.5-flash",
     contents
   });
-}
+};
 
 export const translateToChinese = async (text: string, context: 'name' | 'genre' | 'country' = 'name'): Promise<string> => {
   if (!text) return text;

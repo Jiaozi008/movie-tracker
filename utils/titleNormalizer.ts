@@ -1,13 +1,13 @@
 /**
  * Title normalization utility
- * Ensures consistent title matching for TV series deduplication
+ * Ensures consistent title matching for TV series deduplication while preserving distinct seasons
  */
 
 /**
  * Normalize a media title for stable comparison/grouping.
  * - Trims whitespace
  * - Converts to lowercase
- * - Removes common suffixes like (电视剧), 第X季, Season X
+ * - Removes generic platform/type bracketed suffixes: (电视剧), [TV], (网剧), (动画)
  * - Collapses multiple spaces
  */
 export function normalizeTitle(title: string | undefined | null): string {
@@ -15,13 +15,10 @@ export function normalizeTitle(title: string | undefined | null): string {
     return title
         .trim()
         .toLowerCase()
-        // Remove bracketed suffixes: (电视剧), [TV], 【第二季】 etc.
-        .replace(/[\[【（(].*?[\]】）)]/g, '')
-        // Remove season indicators: 第一季, 第2季, Season 1, S01
-        .replace(/第[一二三四五六七八九十\d]+季/g, '')
-        .replace(/season\s*\d+/gi, '')
-        .replace(/\bs\d{1,2}\b/gi, '')
+        // Remove generic bracketed media markers but KEEP season indicators
+        .replace(/[\[【（(]\s*(?:电视剧|网剧|美剧|日剧|韩剧|国剧|英剧|港剧|台剧|动画|动漫|纪录片|电影|tv|movie)\s*[\]】）)]/gi, '')
         // Collapse whitespace
         .replace(/\s+/g, ' ')
         .trim();
 }
+

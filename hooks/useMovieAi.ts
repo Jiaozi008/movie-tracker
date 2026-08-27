@@ -20,6 +20,8 @@ interface UseMovieAiOptions {
         duration?: number;
         totalEpisodes?: number;
         currentEpisode?: number;
+        overview?: string;
+        tags?: string[];
     }) => void;
     onReviewGenerated: (review: string) => void;
     onError: (msg: string) => void;
@@ -73,6 +75,8 @@ export const useMovieAi = ({
                     currentEpisode: (data.mediaType === 'tv' && data.totalEpisodes && !initialData && status === MovieStatus.WATCHED)
                         ? data.totalEpisodes
                         : undefined,
+                    overview: data.summary,
+                    tags: data.tags,
                 });
             }
         } catch (error: any) {
@@ -86,7 +90,14 @@ export const useMovieAi = ({
         if (!title) return;
         setIsReviewLoading(true);
         try {
-            const generatedReview = await generateAiReview(title, rating, mediaType);
+            const generatedReview = await generateAiReview(
+                title,
+                rating,
+                mediaType,
+                (accumulatedText) => {
+                    onReviewGenerated(accumulatedText);
+                }
+            );
             onReviewGenerated(generatedReview);
         } catch (error: any) {
             onError(error.message || '生成影评失败');

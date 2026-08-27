@@ -1,33 +1,58 @@
-
 import LZString from 'lz-string';
 import { Movie } from "../types";
 
 const GIST_FILENAME = "cinelog_backup.json";
 const GIST_DESCRIPTION = "CineLog AI Auto Backup";
 
-export const verifyToken = async (token: string): Promise<boolean> => {
+// 辅助请求超时函数
+const fetchWithTimeout = async (url: string, options: RequestInit = {}, timeout = 8000) => {
+    const controller = new AbortController();
+    const id = setTimeout(() => controller.abort(), timeout);
     try {
-        const res = await fetch("https://api.github.com/user", {
+        const response = await fetch(url, {
+            ...options,
+            signal: controller.signal
+        });
+        clearTimeout(id);
+        return response;
+    } catch (e) {
+        clearTimeout(id);
+        throw e;
+    }
+};
+
+export interface VerifyTokenResult {
+    isValid: boolean;
+    errorType?: 'network' | 'unauthorized';
+}
+
+export const verifyToken = async (token: string): Promise<VerifyTokenResult> => {
+    try {
+        const res = await fetchWithTimeout("https://api.github.com/user", {
             headers: {
                 Authorization: `token ${token}`,
                 Accept: "application/vnd.github.v3+json",
             },
-        });
-        return res.ok;
+        }, 8000);
+        
+        if (res.status === 401 || res.status === 403) {
+            return { isValid: false, errorType: 'unauthorized' };
+        }
+        return { isValid: res.ok };
     } catch (e) {
         console.error("Token verification failed", e);
-        return false;
+        return { isValid: false, errorType: 'network' };
     }
 };
 
 export const findExistingBackupGist = async (token: string): Promise<string | null> => {
     try {
-        const res = await fetch("https://api.github.com/gists", {
+        const res = await fetchWithTimeout("https://api.github.com/gists", {
             headers: {
                 Authorization: `token ${token}`,
                 Accept: "application/vnd.github.v3+json",
             },
-        });
+        }, 8000);
         
         if (!res.ok) return null;
         
@@ -44,7 +69,7 @@ export const findExistingBackupGist = async (token: string): Promise<string | nu
 };
 
 export const createBackupGist = async (token: string, data: Movie[]): Promise<string> => {
-    const res = await fetch("https://api.github.com/gists", {
+    const res = await fetchWithTimeout("https://api.github.com/gists", {
         method: "POST",
         headers: {
             Authorization: `token ${token}`,
@@ -60,7 +85,7 @@ export const createBackupGist = async (token: string, data: Movie[]): Promise<st
                 }
             }
         })
-    });
+    }, 10000); // Create backup has longer timeout
 
     if (!res.ok) throw new Error("创建备份失败");
     const json = await res.json();
@@ -68,7 +93,7 @@ export const createBackupGist = async (token: string, data: Movie[]): Promise<st
 };
 
 export const updateBackupGist = async (token: string, gistId: string, data: Movie[]): Promise<void> => {
-    const res = await fetch(`https://api.github.com/gists/${gistId}`, {
+    const res = await fetchWithTimeout(`https://api.github.com/gists/${gistId}`, {
         method: "PATCH",
         headers: {
             Authorization: `token ${token}`,
@@ -82,18 +107,18 @@ export const updateBackupGist = async (token: string, gistId: string, data: Movi
                 }
             }
         })
-    });
+    }, 10000);
 
     if (!res.ok) throw new Error("上传备份失败");
 };
 
 export const downloadBackupGist = async (token: string, gistId: string): Promise<Movie[]> => {
-    const res = await fetch(`https://api.github.com/gists/${gistId}`, {
+    const res = await fetchWithTimeout(`https://api.github.com/gists/${gistId}`, {
         headers: {
             Authorization: `token ${token}`,
             Accept: "application/vnd.github.v3+json",
         },
-    });
+    }, 10000);
 
     if (!res.ok) throw new Error("获取备份信息失败");
     const gist = await res.json();
@@ -101,7 +126,8 @@ export const downloadBackupGist = async (token: string, gistId: string): Promise
     const file = gist.files[GIST_FILENAME];
     if (!file || !file.raw_url) throw new Error("备份文件已损坏或丢失");
 
-    const contentRes = await fetch(file.raw_url);
+    // Fetch the raw URL content using the same timeout
+    const contentRes = await fetchWithTimeout(file.raw_url, {}, 10000);
     if (!contentRes.ok) throw new Error("下载备份内容失败");
     
     const rawText = await contentRes.text();

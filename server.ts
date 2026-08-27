@@ -109,6 +109,58 @@ app.post('/api/gemini', async (req, res) => {
     }
 });
 
+// Streaming SSE endpoint for Gemini
+app.post('/api/gemini/stream', async (req, res) => {
+    const { model: modelTitle, contents } = req.body;
+
+    if (!apiKey) {
+        return res.status(500).json({ error: 'Gemini API Key 未配置，请在 .env.local 中设置 VITE_API_KEY。' });
+    }
+
+    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+
+    const model = modelTitle || 'gemini-2.5-flash';
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${apiKey}`;
+
+    try {
+        const upstreamRes = await nodeFetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                contents: [{ parts: [{ text: contents }] }]
+            }),
+            agent: agent,
+        });
+
+        if (!upstreamRes.ok) {
+            const errText = await upstreamRes.text();
+            res.write(`data: ${JSON.stringify({ error: errText })}\n\n`);
+            return res.end();
+        }
+
+        if (upstreamRes.body) {
+            upstreamRes.body.on('data', (chunk: Buffer) => {
+                res.write(chunk);
+            });
+            upstreamRes.body.on('end', () => {
+                res.end();
+            });
+            upstreamRes.body.on('error', (err: any) => {
+                console.error('Stream piping error:', err);
+                res.end();
+            });
+        } else {
+            res.end();
+        }
+    } catch (error: any) {
+        console.error('Gemini Stream Error:', error.message);
+        res.write(`data: ${JSON.stringify({ error: error.message || 'Stream failed' })}\n\n`);
+        res.end();
+    }
+});
+
 app.listen(port, () => {
     console.log(`Gemini Proxy Server running at http://localhost:${port}`);
 });
