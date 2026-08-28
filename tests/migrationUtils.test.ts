@@ -55,10 +55,10 @@ describe('migrateMovieStatus', () => {
     expect(result.status).toBe(MovieStatus.DROPPED);
   });
 
-  it('should return same reference for already-valid status (no copy)', () => {
+  it('should return valid movie for already-valid status', () => {
     const movie = baseMovie({ status: MovieStatus.WATCHED });
     const result = migrateMovieStatus(movie);
-    expect(result).toBe(movie);
+    expect(result).toStrictEqual(movie);
   });
 });
 

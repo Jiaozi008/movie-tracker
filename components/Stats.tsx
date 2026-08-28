@@ -344,16 +344,30 @@ export const Stats: React.FC<StatsProps> = ({ movies, onToast, onSelectPerson })
 
         const rewatchKing = rewatchList[0] || null;
 
-        // 倍速最高记录 (排除想看)
+        // 倍速最高记录 (排除想看，全面扫描作品主倍速与单集流水倍速)
         const activeWatchRecords = filteredMovies.filter(m => m.status !== MovieStatus.PLANNING);
-        const maxSpeedRecord = activeWatchRecords.reduce((max, m) => {
-            const speed = m.playbackSpeed || 1.0;
-            const maxSpeed = max?.playbackSpeed || 1.0;
-            return speed > maxSpeed ? m : max;
-        }, null as Movie | null);
+        let maxFoundSpeed = 1.0;
+        let speedDemonTitle = '';
 
-        const speedDemon = maxSpeedRecord && (maxSpeedRecord.playbackSpeed || 1.0) > 1.0
-            ? { title: maxSpeedRecord.title, speed: maxSpeedRecord.playbackSpeed || 1.0 }
+        activeWatchRecords.forEach(m => {
+            const baseSpeed = m.playbackSpeed || 1.0;
+            if (baseSpeed > maxFoundSpeed) {
+                maxFoundSpeed = baseSpeed;
+                speedDemonTitle = m.title;
+            }
+            if (m.watchHistory && Array.isArray(m.watchHistory)) {
+                m.watchHistory.forEach(log => {
+                    const logSpeed = log.playbackSpeed || baseSpeed;
+                    if (logSpeed > maxFoundSpeed) {
+                        maxFoundSpeed = logSpeed;
+                        speedDemonTitle = m.title;
+                    }
+                });
+            }
+        });
+
+        const speedDemon = maxFoundSpeed > 1.0
+            ? { title: speedDemonTitle, speed: maxFoundSpeed }
             : null;
 
         // 影评人设

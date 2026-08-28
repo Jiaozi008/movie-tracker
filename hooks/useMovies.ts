@@ -200,14 +200,28 @@ export const useMovies = (callbacks?: UseMoviesCallbacks) => {
     }
 
     const { migrated } = migrateAllMovieStatuses(validMovies);
-    const { merged, hasLocalChanges } = mergeMovies(movies, migrated, deletedMovies);
 
-    if (hasLocalChanges) {
-      setMovies(merged);
-      callbacks?.onSuccess?.(`成功导入并合并 ${merged.length} 条记录。`);
-    } else {
-      callbacks?.onInfo?.('没有发现新记录（所有数据已是最新）。');
+    // 关键修复：从本地删除墓碑中移除所有本次导入的 ID（复活被导入的记录，防止被墓碑静默丢弃）
+    const updatedDeleted = { ...deletedMovies };
+    let hadTombstones = false;
+    migrated.forEach(m => {
+      if (updatedDeleted[m.id] !== undefined) {
+        delete updatedDeleted[m.id];
+        hadTombstones = true;
+      }
+    });
+
+    if (hadTombstones) {
+      setDeletedMovies(updatedDeleted);
+      localStorage.setItem(DELETED_STORAGE_KEY, JSON.stringify(updatedDeleted));
     }
+
+    // 导入时以空墓碑或已清理的墓碑合并，确保所有导入数据 100% 入库
+    const { merged } = mergeMovies(movies, migrated, updatedDeleted);
+
+    setMovies(merged);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
+    callbacks?.onSuccess?.(`成功导入并合并 ${migrated.length} 条记录（片库现共 ${merged.length} 条）。`);
   }, [movies, deletedMovies, callbacks]);
 
   const syncWithCloud = useCallback((cloudMovies: Movie[]) => {
@@ -231,6 +245,27 @@ export const useMovies = (callbacks?: UseMoviesCallbacks) => {
     };
   }, [movies, deletedMovies]);
 
+  const replaceMovies = useCallback((newMovies: Movie[], removedIds?: string[]) => {
+    if (!Array.isArray(newMovies)) return;
+    const validMovies = newMovies.filter(isValidMovie);
+    const { migrated } = migrateAllMovieStatuses(validMovies);
+
+    if (removedIds && removedIds.length > 0) {
+      setDeletedMovies(d => {
+        const updated = { ...d };
+        const now = Date.now();
+        removedIds.forEach(id => {
+          updated[id] = now;
+        });
+        localStorage.setItem(DELETED_STORAGE_KEY, JSON.stringify(updated));
+        return updated;
+      });
+    }
+
+    setMovies(migrated);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(migrated));
+  }, []);
+
   return {
     movies,
     isSaving,
@@ -241,6 +276,7 @@ export const useMovies = (callbacks?: UseMoviesCallbacks) => {
     undoDelete,
     bulkDeleteMovies,
     importMovies,
+    replaceMovies,
     syncWithCloud
   };
 };

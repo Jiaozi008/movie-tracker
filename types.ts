@@ -10,6 +10,7 @@ export type MediaType = 'movie' | 'tv';
 export interface EpisodeWatchLog {
   episode: number;
   date: number; // Timestamp in milliseconds
+  playbackSpeed?: number; // 该集实际观看倍速 (如 1.0, 1.5, 2.0)
   note?: string;
 }
 

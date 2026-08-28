@@ -88,11 +88,12 @@ export function calculateTvDuration(
 
                     if (matchingLogs.length > 0) {
                         const dur = m.duration || 0;
-                        const speed = m.playbackSpeed || 1.0;
-                        const avgPerEp = m.actualWatchTime && (m.currentEpisode || 0) > 0
-                            ? (m.actualWatchTime / m.currentEpisode!)
-                            : (dur / speed);
-                        totalDuration += matchingLogs.length * avgPerEp;
+                        const defaultSpeed = m.playbackSpeed || 1.0;
+                        const logDuration = matchingLogs.reduce((sum, log) => {
+                            const speed = log.playbackSpeed || defaultSpeed;
+                            return sum + (dur / speed);
+                        }, 0);
+                        totalDuration += logDuration;
                     }
                 }
             }

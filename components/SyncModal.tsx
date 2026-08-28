@@ -24,6 +24,7 @@ import {
   Play,
   Pause,
   Camera,
+  Sparkles,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { Html5QrcodeScanner } from 'html5-qrcode';
@@ -38,6 +39,7 @@ interface SyncModalProps {
   onSaveConfig: (cfg: Partial<SyncConfig>) => void;
   onUpload: () => void;
   onDownload: () => void;
+  onOpenTvMerge?: () => void;
   isSyncing: boolean;
   syncStatus: 'idle' | 'success' | 'error';
   statusMessage: string;
@@ -54,6 +56,7 @@ export const SyncModal: React.FC<SyncModalProps> = ({
   onSaveConfig,
   onUpload,
   onDownload,
+  onOpenTvMerge,
   isSyncing,
   syncStatus,
   statusMessage,
@@ -594,6 +597,30 @@ export const SyncModal: React.FC<SyncModalProps> = ({
                         扫描二维码
                       </span>
                     </button>
+                  </div>
+
+                  {/* TV Merge Cleaner Entry */}
+                  <div className="p-3.5 rounded-xl bg-gradient-to-r from-fuchsia-950/40 via-slate-800 to-indigo-950/40 border border-fuchsia-500/30 flex items-center justify-between gap-3 shadow-md">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-8 h-8 rounded-lg bg-fuchsia-500/20 text-fuchsia-400 flex items-center justify-center shrink-0">
+                        <Sparkles size={16} />
+                      </div>
+                      <div>
+                        <div className="text-xs font-bold text-slate-200">智能合并同剧分段</div>
+                        <div className="text-[10px] text-slate-400">将多条分段记录精炼为 1 条，无损合并倍速与打卡热力图</div>
+                      </div>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => {
+                        onClose();
+                        onOpenTvMerge?.();
+                      }}
+                      className="shrink-0 text-xs border-fuchsia-500/40 hover:border-fuchsia-400 text-fuchsia-300 font-semibold"
+                    >
+                      检查合并
+                    </Button>
                   </div>
 
                   <div className="h-px bg-slate-800 my-2"></div>

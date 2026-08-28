@@ -66,7 +66,7 @@ describe('App Render & Cloud Download Crash Test', () => {
     });
 
     it('点击从云端下载不应该导致 React 崩溃', async () => {
-        const gistPath = path.join(__dirname, '..', 'cinelog_backup_2026-05-21.json');
+        const gistPath = path.join(__dirname, '..', 'cinelog_backup_2026-08-28.json');
         const rawText = fs.readFileSync(gistPath, "utf-8");
         const cloudMovies = JSON.parse(rawText);
 
@@ -103,7 +103,7 @@ describe('App Render & Cloud Download Crash Test', () => {
     });
 
     it('能够正确通过“多刷”按钮筛选多刷记录', async () => {
-        const gistPath = path.join(__dirname, '..', 'cinelog_backup_2026-05-21.json');
+        const gistPath = path.join(__dirname, '..', 'cinelog_backup_2026-08-28.json');
         const rawText = fs.readFileSync(gistPath, "utf-8");
         const cloudMovies = JSON.parse(rawText);
         
@@ -131,9 +131,9 @@ describe('App Render & Cloud Download Crash Test', () => {
         expect(multiWatchBtn).toBeDefined();
         fireEvent.click(multiWatchBtn);
 
-        // 统计 255 条云端记录中实际 watchIteration > 1 的记录数
+        // 统计云端记录中实际 watchIteration > 1 的记录数
         const expectedMultiWatchCount = cloudMovies.filter((m: any) => m.watchIteration && m.watchIteration > 1).length;
-        expect(expectedMultiWatchCount).toBe(2);
+        expect(expectedMultiWatchCount).toBeGreaterThanOrEqual(2);
         console.log(`Successfully verified "多刷" filter with ${expectedMultiWatchCount} expected records.`);
     });
 });

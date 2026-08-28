@@ -10,6 +10,7 @@ import { TmdbDetailResult, downloadPosterAsBase64 } from '../services/tmdbServic
 import { translateToChinese } from '../services/geminiService';
 import { normalizeTitle } from '../utils/titleNormalizer';
 import { getRecommendedIteration as getRecommendedIterationUtil, calculateTvInheritedHabits } from '../utils/statsCalculator';
+import { calculateMovieActualWatchTime } from '../utils/episodeUtils';
 import { parseClipboardMediaText } from '../utils/clipboardParser';
 import { extractSmartTags } from '../utils/tagExtractor';
 import {
@@ -432,14 +433,6 @@ export const MovieForm: React.FC<MovieFormProps> = ({ initialData, existingMovie
       const actualSpeed = Math.min(3.0, Math.max(0.5, speedVal));
 
       const durationNum = Math.max(0, parseInt(state.duration) || 0);
-      let actualWatchTime = 0;
-
-      if (state.mediaType === 'tv') {
-        const episodesWatched = Math.max(0, parseInt(state.currentEpisode) || 0);
-        actualWatchTime = Math.round((episodesWatched * durationNum) / actualSpeed);
-      } else {
-        actualWatchTime = Math.round(durationNum / actualSpeed);
-      }
 
       let finalStatus = state.status;
       if (state.mediaType === 'tv') {
@@ -460,14 +453,16 @@ export const MovieForm: React.FC<MovieFormProps> = ({ initialData, existingMovie
         if (!updatedWatchHistory || updatedWatchHistory.length === 0) {
           updatedWatchHistory = Array.from({ length: parsedCurrentEp }, (_, i) => ({
             episode: i + 1,
-            date: addedAtTimestamp
+            date: addedAtTimestamp,
+            playbackSpeed: actualSpeed
           }));
         } else if (updatedWatchHistory.length < parsedCurrentEp) {
           const padCount = parsedCurrentEp - updatedWatchHistory.length;
           for (let i = 0; i < padCount; i++) {
             updatedWatchHistory.push({
               episode: updatedWatchHistory.length + 1,
-              date: addedAtTimestamp
+              date: addedAtTimestamp,
+              playbackSpeed: actualSpeed
             });
           }
         } else if (updatedWatchHistory.length > parsedCurrentEp) {
@@ -475,6 +470,19 @@ export const MovieForm: React.FC<MovieFormProps> = ({ initialData, existingMovie
         }
       } else if (state.mediaType === 'tv' && parsedCurrentEp === 0) {
         updatedWatchHistory = [];
+      }
+
+      let actualWatchTime = 0;
+      if (state.mediaType === 'tv') {
+        actualWatchTime = calculateMovieActualWatchTime({
+          duration: durationNum,
+          playbackSpeed: actualSpeed,
+          currentEpisode: parsedCurrentEp,
+          mediaType: 'tv',
+          watchHistory: updatedWatchHistory
+        }, updatedWatchHistory);
+      } else {
+        actualWatchTime = Math.round(durationNum / actualSpeed);
       }
 
       // 维护重温多刷时间流水 rewatchHistory

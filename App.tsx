@@ -15,15 +15,17 @@ import { fuzzyMatch } from './utils/searchUtils';
 import { parseImportFile, downloadFile, convertToCSV } from './utils/fileUtils';
 import { calculateEpisodeUpdate } from './utils/episodeUtils';
 import { SyncModal } from './components/SyncModal';
+import { TvMergeModal } from './components/TvMergeModal';
+import { MobileNavBar, MobileTab } from './components/MobileNavBar';
 import { ToastContainer } from './components/ui/Toast';
-import { Plus, Search, Save, Film, Download, FileJson, FileSpreadsheet, ChevronDown, Calendar, CheckSquare, Trash2, X, Upload, ArrowUpDown, Globe, ChevronLeft, ChevronRight, Menu, Cloud, Tag, LayoutGrid, Image as ImageIcon } from 'lucide-react';
+import { Plus, Search, Save, Film, Tv, Download, FileJson, FileSpreadsheet, ChevronDown, Calendar, CheckSquare, Trash2, X, Upload, ArrowUpDown, Globe, ChevronLeft, ChevronRight, Menu, Cloud, LayoutGrid, Image as ImageIcon, Sparkles, Layers } from 'lucide-react';
 
 export default function App() {
     // Toast system
     const toast = useToast();
 
     // Data Logic via Custom Hook
-    const { movies, isSaving, addMovie, updateMovie, deleteMovie, undoDelete, bulkDeleteMovies, importMovies, syncWithCloud } = useMovies({
+    const { movies, isSaving, addMovie, updateMovie, deleteMovie, undoDelete, bulkDeleteMovies, importMovies, replaceMovies, syncWithCloud } = useMovies({
         onSuccess: (msg) => toast.success(msg),
         onError: (msg) => toast.error(msg),
         onInfo: (msg) => toast.info(msg),
@@ -72,19 +74,42 @@ export default function App() {
     // UI States
     const [isFormOpen, setIsFormOpen] = useState(false);
     const [isSyncModalOpen, setIsSyncModalOpen] = useState(false);
+    const [isTvMergeOpen, setIsTvMergeOpen] = useState(false);
+    const [isAiButlerOpen, setIsAiButlerOpen] = useState(false);
     const [editingMovie, setEditingMovie] = useState<Movie | null>(null);
     const [showExportMenu, setShowExportMenu] = useState(false);
     const [showMobileMenu, setShowMobileMenu] = useState(false);
+    const [mobileTab, setMobileTab] = useState<MobileTab>('library');
 
     // Filter & Search States
     const [searchTerm, setSearchTerm] = useState('');
     const debouncedSearchTerm = useDebounce(searchTerm, 300); // 300ms delay
 
     const [filterStatus, setFilterStatus] = useState<string>('全部');
+    const [filterMediaType, setFilterMediaType] = useState<'all' | 'movie' | 'tv'>('all');
+    const [filterGenre, setFilterGenre] = useState<string>('all');
     const [dateFilter, setDateFilter] = useState<string>('all');
     const [filterCountry, setFilterCountry] = useState<string>('all');
-    const [filterTag, setFilterTag] = useState<string>('all');
     const [sortConfig, setSortConfig] = useState<{ field: string, direction: 'asc' | 'desc' }>({ field: 'addedAt', direction: 'desc' });
+
+    const hasActiveFilters = Boolean(
+        searchTerm ||
+        filterStatus !== '全部' ||
+        filterMediaType !== 'all' ||
+        filterGenre !== 'all' ||
+        dateFilter !== 'all' ||
+        filterCountry !== 'all'
+    );
+
+    const handleClearAllFilters = () => {
+        setSearchTerm('');
+        setFilterStatus('全部');
+        setFilterMediaType('all');
+        setFilterGenre('all');
+        setDateFilter('all');
+        setFilterCountry('all');
+        toast.info('已重置所有筛选条件 🔄');
+    };
 
     // View Mode State: 'grid' (标准卡片) | 'poster' (海报墙)
     const [viewMode, setViewMode] = useState<'grid' | 'poster'>(() => {
@@ -161,7 +186,7 @@ export default function App() {
     // Reset pagination when filters change
     useEffect(() => {
         setCurrentPage(1);
-    }, [debouncedSearchTerm, filterStatus, dateFilter, filterCountry, filterTag, sortConfig]);
+    }, [debouncedSearchTerm, filterStatus, filterMediaType, filterGenre, dateFilter, filterCountry, sortConfig]);
 
     // Calculate available date options from data (including watchHistory timestamps)
     const dateOptions = useMemo(() => {
@@ -207,18 +232,18 @@ export default function App() {
         return Array.from(countries).sort((a, b) => a.localeCompare(b, 'zh-CN'));
     }, [movies]);
 
-    // Calculate available tag options
-    const tagOptions = useMemo(() => {
-        const tagSet = new Set<string>();
+    // Calculate available genre options (影视类型)
+    const genreOptions = useMemo(() => {
+        const genreSet = new Set<string>();
         movies.forEach(m => {
-            if (m.tags && Array.isArray(m.tags)) {
-                m.tags.forEach(t => {
-                    const tr = t.trim();
-                    if (tr) tagSet.add(tr);
+            if (m.genre) {
+                const parts = m.genre.split(/[,，/、\s+]+/).map(g => g.trim());
+                parts.forEach(g => {
+                    if (g && g.length > 0) genreSet.add(g);
                 });
             }
         });
-        return Array.from(tagSet).sort((a, b) => a.localeCompare(b, 'zh-CN'));
+        return Array.from(genreSet).sort((a, b) => a.localeCompare(b, 'zh-CN'));
     }, [movies]);
 
     const handleAddMovie = (movieData: Omit<Movie, 'id' | 'lastUpdated'>) => {
@@ -376,15 +401,23 @@ export default function App() {
                 matchesDate = addedAtMatches || !!historyMatches;
             }
 
-            // 4. Country Filter
+            // 4. Media Classification Filter (分类筛选: 电影 vs 电视剧)
+            let matchesMediaType = true;
+            if (filterMediaType === 'movie') {
+                matchesMediaType = movie.mediaType !== 'tv' && (!movie.totalEpisodes || movie.totalEpisodes <= 1);
+            } else if (filterMediaType === 'tv') {
+                matchesMediaType = movie.mediaType === 'tv' || (!!movie.totalEpisodes && movie.totalEpisodes > 1) || (!!movie.currentEpisode && movie.currentEpisode > 0);
+            }
+
+            // 5. Genre Filter (类型筛选: 动作, 剧情, 科幻...)
+            const matchesGenre = filterGenre === 'all' || (movie.genre && movie.genre.includes(filterGenre));
+
+            // 6. Country Filter (地区筛选)
             const matchesCountry = filterCountry === 'all' || (movie.country && movie.country.includes(filterCountry));
 
-            // 5. Tag Filter
-            const matchesTag = filterTag === 'all' || (movie.tags && movie.tags.includes(filterTag));
-
-            return matchesSearch && matchesStatus && matchesDate && matchesCountry && matchesTag;
+            return matchesSearch && matchesStatus && matchesDate && matchesMediaType && matchesGenre && matchesCountry;
         });
-    }, [movies, debouncedSearchTerm, filterStatus, dateFilter, filterCountry, filterTag]);
+    }, [movies, debouncedSearchTerm, filterStatus, filterMediaType, filterGenre, dateFilter, filterCountry]);
 
     const sortedMovies = useMemo(() => {
         const data = [...filteredMovies];
@@ -443,7 +476,7 @@ export default function App() {
     };
 
     return (
-        <div className="min-h-screen supports-[min-height:100dvh]:min-h-[100dvh] bg-slate-900 text-slate-100 pb-20 font-sans">
+        <div className="min-h-screen supports-[min-height:100dvh]:min-h-[100dvh] bg-slate-900 text-slate-100 pb-28 sm:pb-20 font-sans">
             <input
                 type="file"
                 ref={fileInputRef}
@@ -451,15 +484,6 @@ export default function App() {
                 accept=".json,.csv"
                 className="hidden"
             />
-
-            {/* Floating Action Button */}
-            <button
-                onClick={() => { setEditingMovie(null); setIsFormOpen(true); }}
-                className="fixed bottom-6 right-6 z-40 bg-indigo-600 text-white rounded-full p-4 shadow-2xl shadow-indigo-500/40 sm:hidden hover:scale-110 active:scale-95 transition-all"
-                title="添加记录"
-            >
-                <Plus size={28} />
-            </button>
 
             {/* Navbar */}
             <nav className="sticky top-0 z-30 bg-slate-900/80 backdrop-blur-md border-b border-slate-800">
@@ -531,6 +555,12 @@ export default function App() {
                                             >
                                                 <FileSpreadsheet size={14} /> 导出 CSV
                                             </button>
+                                            <button
+                                                onClick={() => { setIsTvMergeOpen(true); setShowExportMenu(false); }}
+                                                className="w-full px-4 py-3 text-left text-sm text-fuchsia-300 hover:bg-slate-700 hover:text-white transition-colors flex items-center gap-2 border-t border-slate-700 font-medium"
+                                            >
+                                                <Sparkles size={14} className="text-fuchsia-400" /> 智能合并同剧分段
+                                            </button>
                                         </div>
                                     </>
                                 )}
@@ -587,6 +617,13 @@ export default function App() {
                                     </button>
 
                                     <button
+                                        onClick={() => { setIsTvMergeOpen(true); setShowMobileMenu(false); }}
+                                        className="w-full px-4 py-3 text-left text-sm text-fuchsia-300 hover:bg-slate-700 hover:text-white transition-colors flex items-center gap-3 border-t border-slate-700/50 font-medium"
+                                    >
+                                        <Sparkles size={18} className="text-fuchsia-400" /> 智能合并同剧分段
+                                    </button>
+
+                                    <button
                                         onClick={() => { downloadFile(JSON.stringify(movies, null, 2), 'json'); setShowMobileMenu(false); }}
                                         className="w-full px-4 py-3 text-left text-sm text-slate-300 hover:bg-slate-700 hover:text-white transition-colors flex items-center gap-3 border-t border-slate-700/50"
                                     >
@@ -612,21 +649,28 @@ export default function App() {
 
             <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
 
-                <Stats
-                    movies={movies}
-                    onToast={(msg, type) => toast[type](msg)}
-                    onSelectPerson={(name) => {
-                        setFilterStatus('全部');
-                        setDateFilter('all');
-                        setFilterCountry('all');
-                        setFilterTag('all');
-                        setSearchTerm(name);
-                        searchInputRef.current?.focus();
-                        toast.info(`已筛选影人：「${name}」`);
-                    }}
-                />
+                {/* 统计看板：移动端在 'stats' Tab 下展示，桌面端始终保留顶部展示 */}
+                <div className={mobileTab === 'stats' ? 'block animate-in fade-in duration-200' : 'hidden sm:block'}>
+                    <Stats
+                        movies={movies}
+                        onToast={(msg, type) => toast[type](msg)}
+                        onSelectPerson={(name) => {
+                            setFilterStatus('全部');
+                            setFilterMediaType('all');
+                            setFilterGenre('all');
+                            setDateFilter('all');
+                            setFilterCountry('all');
+                            setSearchTerm(name);
+                            setMobileTab('library');
+                            searchInputRef.current?.focus();
+                            toast.info(`已筛选影人：「${name}」`);
+                        }}
+                    />
+                </div>
 
-                {/* Filters & Search */}
+                {/* 影库列表与筛选区：移动端在 'library' Tab 下展示，桌面端始终展示 */}
+                <div className={mobileTab === 'library' ? 'block animate-in fade-in duration-200' : 'hidden sm:block'}>
+                    {/* Filters & Search */}
                 <div className="flex flex-col md:flex-row gap-4 mb-6 sticky top-16 z-20 bg-slate-900/95 p-3 -mx-4 sm:-mx-2 sm:rounded-xl border-y sm:border border-slate-800/50 backdrop-blur-sm shadow-xl shadow-black/20">
                     {isSelectionMode ? (
                         <div className="flex-1 flex items-center gap-3 animate-in fade-in slide-in-from-top-2 duration-300 px-1">
@@ -656,51 +700,51 @@ export default function App() {
                                 variant="danger"
                                 disabled={selectedIds.size === 0}
                                 onClick={handleBulkDelete}
-                                className="flex items-center gap-1 px-3"
+                                className="font-medium"
                             >
-                                <Trash2 size={16} /> <span className="hidden sm:inline">删除选中</span>
+                                <Trash2 size={15} className="mr-1.5" /> 批量删除
                             </Button>
                             <Button
                                 size="sm"
-                                variant="ghost"
+                                variant="outline"
                                 onClick={toggleSelectionMode}
-                                className="px-2"
+                                className="border-slate-700 text-slate-300"
                             >
-                                <X size={16} />
+                                退出
                             </Button>
                         </div>
                     ) : (
                         <>
                             <div className="flex-1 flex flex-col sm:flex-row gap-2">
                                 <div className="relative flex-1">
-                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
+                                    <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-500">
+                                        <Search size={18} />
+                                    </div>
                                     <input
                                         ref={searchInputRef}
                                         type="text"
-                                        placeholder="搜索标题、导演、演员、类型、标签..."
+                                        placeholder="搜索片名、导演、演员、类型、标签或手记..."
                                         value={searchTerm}
                                         onChange={(e) => setSearchTerm(e.target.value)}
-                                        className="w-full bg-slate-800 border border-slate-700 rounded-lg pl-10 pr-20 py-2 text-base sm:text-sm focus:ring-2 focus:ring-indigo-500 outline-none placeholder:text-slate-500 transition-shadow"
+                                        className="w-full pl-10 pr-9 py-2 bg-slate-800/80 border border-slate-700 rounded-xl text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-sm transition-all shadow-inner"
                                     />
-                                    <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
-                                        {searchTerm && (
-                                            <button
-                                                type="button"
-                                                onClick={() => { setSearchTerm(''); searchInputRef.current?.focus(); }}
-                                                className="p-1 rounded-md text-slate-400 hover:text-white hover:bg-slate-700 transition-colors"
-                                                title="清空搜索"
-                                            >
-                                                <X size={14} />
-                                            </button>
-                                        )}
-                                        <kbd className="hidden sm:inline-block px-1.5 py-0.5 text-[10px] font-mono text-slate-400 bg-slate-900/90 border border-slate-700 rounded shadow-sm pointer-events-none">
+                                    {searchTerm ? (
+                                        <button
+                                            onClick={() => setSearchTerm('')}
+                                            className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-500 hover:text-slate-300"
+                                        >
+                                            <X size={14} />
+                                        </button>
+                                    ) : (
+                                        <kbd className="hidden sm:inline-flex absolute right-3 top-1/2 -translate-y-1/2 px-1.5 py-0.5 text-[10px] font-semibold text-slate-500 bg-slate-700/60 border border-slate-600/60 rounded">
                                             /
                                         </kbd>
-                                    </div>
+                                    )}
                                 </div>
 
-                                <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1 sm:pb-0">
-                                    <div className="relative min-w-[130px] shrink-0">
+                                <div className="grid grid-cols-2 sm:grid-cols-3 md:flex md:flex-wrap lg:flex-nowrap gap-2 w-full sm:w-auto">
+                                    {/* 1. 排序 */}
+                                    <div className="relative min-w-0 sm:min-w-[120px] flex-1">
                                         <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none">
                                             <ArrowUpDown size={14} />
                                         </div>
@@ -710,7 +754,7 @@ export default function App() {
                                                 const [field, direction] = e.target.value.split('-');
                                                 setSortConfig({ field, direction: direction as 'asc' | 'desc' });
                                             }}
-                                            className="w-full appearance-none bg-slate-800 border border-slate-700 rounded-lg pl-8 pr-7 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none text-slate-300 hover:text-white cursor-pointer transition-colors"
+                                            className="w-full appearance-none bg-slate-800 border border-slate-700 rounded-lg pl-8 pr-7 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none text-slate-300 hover:text-white cursor-pointer transition-colors truncate"
                                         >
                                             <option value="addedAt-desc">最近添加</option>
                                             <option value="addedAt-asc">最早添加</option>
@@ -723,14 +767,50 @@ export default function App() {
                                         <ChevronDown size={14} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
                                     </div>
 
-                                    <div className="relative min-w-[110px] shrink-0">
+                                    {/* 2. 分类 (电影 / 电视剧) */}
+                                    <div className="relative min-w-0 sm:min-w-[105px] flex-1">
+                                        <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none">
+                                            <Tv size={14} />
+                                        </div>
+                                        <select
+                                            value={filterMediaType}
+                                            onChange={(e) => setFilterMediaType(e.target.value as 'all' | 'movie' | 'tv')}
+                                            className="w-full appearance-none bg-slate-800 border border-slate-700 rounded-lg pl-8 pr-7 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none text-slate-300 hover:text-white cursor-pointer transition-colors truncate"
+                                        >
+                                            <option value="all">所有分类</option>
+                                            <option value="movie">🎬 电影</option>
+                                            <option value="tv">📺 电视剧</option>
+                                        </select>
+                                        <ChevronDown size={14} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
+                                    </div>
+
+                                    {/* 3. 类型 (类型筛选) */}
+                                    <div className="relative min-w-0 sm:min-w-[105px] flex-1">
+                                        <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none">
+                                            <Layers size={14} />
+                                        </div>
+                                        <select
+                                            value={filterGenre}
+                                            onChange={(e) => setFilterGenre(e.target.value)}
+                                            className="w-full appearance-none bg-slate-800 border border-slate-700 rounded-lg pl-8 pr-7 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none text-slate-300 hover:text-white cursor-pointer transition-colors truncate"
+                                        >
+                                            <option value="all">所有类型</option>
+                                            {genreOptions.map(g => (
+                                                <option key={g} value={g}>{g}</option>
+                                            ))}
+                                        </select>
+                                        <ChevronDown size={14} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
+                                    </div>
+
+                                    {/* 4. 地区 */}
+                                    <div className="relative min-w-0 sm:min-w-[105px] flex-1">
                                         <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none">
                                             <Globe size={14} />
                                         </div>
                                         <select
                                             value={filterCountry}
                                             onChange={(e) => setFilterCountry(e.target.value)}
-                                            className="w-full appearance-none bg-slate-800 border border-slate-700 rounded-lg pl-8 pr-7 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none text-slate-300 hover:text-white cursor-pointer transition-colors"
+                                            className="w-full appearance-none bg-slate-800 border border-slate-700 rounded-lg pl-8 pr-7 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none text-slate-300 hover:text-white cursor-pointer transition-colors truncate"
                                         >
                                             <option value="all">所有地区</option>
                                             {countryOptions.map(c => (
@@ -740,14 +820,15 @@ export default function App() {
                                         <ChevronDown size={14} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
                                     </div>
 
-                                    <div className="relative min-w-[110px] shrink-0">
+                                    {/* 5. 时间 */}
+                                    <div className="relative min-w-0 sm:min-w-[105px] flex-1 col-span-2 sm:col-span-1">
                                         <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none">
                                             <Calendar size={14} />
                                         </div>
                                         <select
                                             value={dateFilter}
                                             onChange={(e) => setDateFilter(e.target.value)}
-                                            className="w-full appearance-none bg-slate-800 border border-slate-700 rounded-lg pl-8 pr-7 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none text-slate-300 hover:text-white cursor-pointer transition-colors"
+                                            className="w-full appearance-none bg-slate-800 border border-slate-700 rounded-lg pl-8 pr-7 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none text-slate-300 hover:text-white cursor-pointer transition-colors truncate"
                                         >
                                             <optgroup label="快捷筛选">
                                                 <option value="all">全部时间</option>
@@ -772,25 +853,6 @@ export default function App() {
                                         </select>
                                         <ChevronDown size={14} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
                                     </div>
-
-                                    {tagOptions.length > 0 && (
-                                        <div className="relative min-w-[110px] shrink-0">
-                                            <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none">
-                                                <Tag size={14} />
-                                            </div>
-                                            <select
-                                                value={filterTag}
-                                                onChange={(e) => setFilterTag(e.target.value)}
-                                                className="w-full appearance-none bg-slate-800 border border-slate-700 rounded-lg pl-8 pr-7 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none text-slate-300 hover:text-white cursor-pointer transition-colors"
-                                            >
-                                                <option value="all">所有标签</option>
-                                                {tagOptions.map(t => (
-                                                    <option key={t} value={t}>#{t}</option>
-                                                ))}
-                                            </select>
-                                            <ChevronDown size={14} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
-                                        </div>
-                                    )}
                                 </div>
                             </div>
 
@@ -842,11 +904,15 @@ export default function App() {
                         </div>
                         <h3 className="text-xl font-medium text-slate-300 mb-2">未找到记录</h3>
                         <p className="text-slate-500 max-w-sm mx-auto mb-6">
-                            {searchTerm || filterStatus !== '全部' || dateFilter !== 'all' || filterCountry !== 'all' || filterTag !== 'all'
-                                ? "尝试调整搜索、时间、地区、标签或状态筛选条件。"
+                            {hasActiveFilters
+                                ? "尝试调整搜索、分类、类型、地区、时间或状态筛选条件。"
                                 : "添加你看过的第一部电影或电视剧吧。"}
                         </p>
-                        {(searchTerm === '' && filterStatus === '全部' && dateFilter === 'all' && filterCountry === 'all' && filterTag === 'all') && (
+                        {hasActiveFilters ? (
+                            <Button variant="outline" size="sm" onClick={handleClearAllFilters}>
+                                清除所有筛选条件
+                            </Button>
+                        ) : (
                             <Button onClick={() => setIsFormOpen(true)}>添加第一条记录</Button>
                         )}
                     </div>
@@ -937,6 +1003,7 @@ export default function App() {
                         )}
                     </>
                 )}
+                </div>
             </main>
 
             {/* Modal */}
@@ -960,15 +1027,46 @@ export default function App() {
                 onSaveConfig={saveSyncConfig}
                 onUpload={handleUpload}
                 onDownload={handleDownload}
+                onOpenTvMerge={() => setIsTvMergeOpen(true)}
                 isSyncing={isSyncing}
                 syncStatus={syncStatus}
                 statusMessage={statusMessage}
             />
 
+            {/* TV Merge Cleaner Modal */}
+            <TvMergeModal
+                isOpen={isTvMergeOpen}
+                onClose={() => setIsTvMergeOpen(false)}
+                movies={movies}
+                onApplyMerge={(mergedMovies, removedIds, msg) => {
+                    replaceMovies(mergedMovies, removedIds);
+                    toast.success(msg);
+                }}
+                onToast={(msg, type) => toast[type](msg)}
+            />
+
             {/* AI Butler */}
             <AiButler
                 movies={movies}
+                isOpen={isAiButlerOpen}
+                onClose={() => setIsAiButlerOpen(false)}
+                onOpen={() => setIsAiButlerOpen(true)}
                 onToast={(msg, type) => toast.addToast(msg, type)}
+            />
+
+            {/* 移动端专属五段式底部导航栏 */}
+            <MobileNavBar
+                activeTab={mobileTab}
+                onTabChange={(tab) => {
+                    setMobileTab(tab);
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                }}
+                onOpenAddMovie={() => {
+                    setEditingMovie(null);
+                    setIsFormOpen(true);
+                }}
+                onOpenAiButler={() => setIsAiButlerOpen(true)}
+                onOpenSettings={() => setIsSyncModalOpen(true)}
             />
 
             {/* Toast Notifications */}

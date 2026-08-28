@@ -7,11 +7,26 @@ import { Button } from './ui/Button';
 
 interface AiButlerProps {
     movies: Movie[];
+    isOpen?: boolean;
+    onOpen?: () => void;
+    onClose?: () => void;
     onToast?: (msg: string, type: 'success' | 'error' | 'info' | 'warning') => void;
 }
 
-export const AiButler: React.FC<AiButlerProps> = ({ movies, onToast }) => {
-    const [isOpen, setIsOpen] = useState(false);
+export const AiButler: React.FC<AiButlerProps> = ({ movies, isOpen: controlledIsOpen, onOpen, onClose, onToast }) => {
+    const [internalIsOpen, setInternalIsOpen] = useState(false);
+    const isControlled = controlledIsOpen !== undefined;
+    const isOpen = isControlled ? controlledIsOpen : internalIsOpen;
+
+    const handleOpen = () => {
+        if (onOpen) onOpen();
+        if (!isControlled) setInternalIsOpen(true);
+    };
+
+    const handleClose = () => {
+        if (onClose) onClose();
+        if (!isControlled) setInternalIsOpen(false);
+    };
     const [isLoading, setIsLoading] = useState(false);
     const [messages, setMessages] = useState<{ role: 'user' | 'bot'; content: string }[]>([
         { role: 'bot', content: '您好！我是您的 AI 观影管家。我可以为您分析观影偏好，或是根据您的品味推荐影片。今天想聊点什么？' }
@@ -53,10 +68,10 @@ export const AiButler: React.FC<AiButlerProps> = ({ movies, onToast }) => {
 
     return (
         <>
-            {/* Floating Button */}
+            {/* Floating Button (Desktop / Tablet only) */}
             <button
-                onClick={() => setIsOpen(true)}
-                className="fixed bottom-24 right-6 z-40 p-4 bg-indigo-600 text-white rounded-full shadow-2xl hover:bg-indigo-700 hover:scale-110 active:scale-95 transition-all group lg:bottom-10 lg:right-10"
+                onClick={handleOpen}
+                className="hidden sm:flex fixed bottom-24 right-6 z-40 p-4 bg-indigo-600 text-white rounded-full shadow-2xl hover:bg-indigo-700 hover:scale-110 active:scale-95 transition-all group lg:bottom-10 lg:right-10 items-center justify-center"
                 title="AI 观影管家"
             >
                 <Bot size={28} className="group-hover:rotate-12 transition-transform" />
@@ -66,7 +81,7 @@ export const AiButler: React.FC<AiButlerProps> = ({ movies, onToast }) => {
             {/* Butler Panel */}
             {isOpen && (
                 <div className="fixed inset-0 z-[60] flex items-end justify-end sm:p-6 pointer-events-none">
-                    <div className="bg-slate-900 border border-slate-700 w-full h-[80vh] sm:h-[600px] sm:max-w-md sm:rounded-2xl shadow-2xl flex flex-col pointer-events-auto overflow-hidden animate-in slide-in-from-bottom-5 duration-300">
+                    <div className="bg-slate-900 border border-slate-700 w-full h-[85vh] sm:h-[600px] sm:max-w-md sm:rounded-2xl shadow-2xl flex flex-col pointer-events-auto overflow-hidden animate-in slide-in-from-bottom-5 duration-300">
                         {/* Header */}
                         <div className="p-4 border-b border-slate-800 flex justify-between items-center bg-indigo-600 text-white">
                             <div className="flex items-center gap-3">
@@ -76,11 +91,11 @@ export const AiButler: React.FC<AiButlerProps> = ({ movies, onToast }) => {
                                 <div>
                                     <h3 className="font-bold">AI 观影管家</h3>
                                     <p className="text-[10px] text-indigo-100 flex items-center gap-1">
-                                        <Sparkles size={10} /> 正在智能分析您的 101 部作品
+                                        <Sparkles size={10} /> 正在智能分析您的 {movies.length} 部作品
                                     </p>
                                 </div>
                             </div>
-                            <button onClick={() => setIsOpen(false)} className="hover:bg-black/20 p-2 rounded-lg transition-colors">
+                            <button onClick={handleClose} className="hover:bg-black/20 p-2 rounded-lg transition-colors">
                                 <X size={20} />
                             </button>
                         </div>

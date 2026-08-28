@@ -57,6 +57,29 @@ export const MovieCard: React.FC<MovieCardProps> = ({
         return rewatchRecords.reduce((max, r) => Math.max(max, r.watchIteration || 1), 1);
     }, [rewatchRecords]);
 
+    // 智能聚类电视剧多倍速分段流水 (如: 1-3集 1.0x, 4-8集 1.5x)
+    const speedSegments = useMemo(() => {
+        if (!movie.watchHistory || movie.watchHistory.length === 0) return [];
+        const segments: { startEp: number; endEp: number; speed: number; date: number; note?: string }[] = [];
+        let currentSeg: { startEp: number; endEp: number; speed: number; date: number; note?: string } | null = null;
+
+        movie.watchHistory.forEach(log => {
+            const speed = log.playbackSpeed || movie.playbackSpeed || 1.0;
+            if (!currentSeg) {
+                currentSeg = { startEp: log.episode, endEp: log.episode, speed, date: log.date, note: log.note };
+            } else if (currentSeg.speed === speed) {
+                currentSeg.endEp = log.episode;
+            } else {
+                segments.push(currentSeg);
+                currentSeg = { startEp: log.episode, endEp: log.episode, speed, date: log.date, note: log.note };
+            }
+        });
+        if (currentSeg) {
+            segments.push(currentSeg);
+        }
+        return segments;
+    }, [movie.watchHistory, movie.playbackSpeed]);
+
     // Status Badge Colors (Existing)
     const statusColors = {
         [MovieStatus.WATCHED]: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30',
@@ -165,6 +188,27 @@ export const MovieCard: React.FC<MovieCardProps> = ({
                     {movie.watchIteration && movie.watchIteration > 1 && (
                         <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md text-[9px] font-extrabold bg-gradient-to-r from-amber-500 to-orange-500 text-white border border-orange-400/20 shadow-md uppercase tracking-tight">
                             ⚡ {movie.watchIteration} 刷
+                        </span>
+                    )}
+                    {((movie.playbackSpeed && movie.playbackSpeed !== 1) || speedSegments.length > 1) && (
+                        <span
+                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[9px] font-bold border backdrop-blur-md uppercase tracking-tight shadow-sm ${
+                                speedSegments.length > 1
+                                    ? 'bg-gradient-to-r from-fuchsia-950/80 via-slate-900/90 to-indigo-950/80 text-fuchsia-300 border-fuchsia-500/40 shadow-fuchsia-500/10'
+                                    : 'bg-black/40 text-amber-300 border-amber-500/30'
+                            }`}
+                            title={
+                                speedSegments.length > 1
+                                    ? `包含 ${speedSegments.length} 段不同倍速打卡记录`
+                                    : `观看倍速: ${movie.playbackSpeed || 1.0}x`
+                            }
+                        >
+                            ⚡ {movie.playbackSpeed || 1.0}x
+                            {speedSegments.length > 1 && (
+                                <span className="text-[8px] px-1 py-0.2 rounded bg-fuchsia-500/30 text-fuchsia-200 font-semibold">
+                                    分段倍速
+                                </span>
+                            )}
                         </span>
                     )}
                 </div>
@@ -395,8 +439,8 @@ export const MovieCard: React.FC<MovieCardProps> = ({
                         )}
                         {movie.review && (
                             <div className="pt-2 border-t border-slate-700/50 mt-1">
-                                <div className="flex justify-between items-center mb-1">
-                                    <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">影评 / 笔记</span>
+                                <div className="flex justify-between items-center mb-1.5">
+                                    <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">影评 / 追剧随笔</span>
                                     <button
                                         type="button"
                                         onClick={(e) => {
@@ -410,16 +454,56 @@ export const MovieCard: React.FC<MovieCardProps> = ({
                                         <Copy size={11} /> 复制
                                     </button>
                                 </div>
-                                <p className="italic text-slate-300 leading-relaxed">"{movie.review}"</p>
+                                {movie.review.includes('\n\n---\n\n') ? (
+                                    <div className="space-y-1.5">
+                                        {movie.review.split('\n\n---\n\n').map((rev, idx) => (
+                                            <div key={idx} className="p-2 rounded-md bg-slate-950/60 border border-slate-800/80 text-[11px] text-slate-300 leading-relaxed italic">
+                                                "{rev.trim()}"
+                                            </div>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <p className="italic text-slate-300 leading-relaxed">"{movie.review}"</p>
+                                )}
                             </div>
                         )}
 
-                        {/* 追剧打卡足迹流水 */}
+                        {/* 分段倍速打卡流水 (当存在多段不同倍速时以结构化卡片呈现) */}
+                        {isTv && speedSegments.length > 1 && (
+                            <div className="mt-3 pt-3 border-t border-slate-700/50">
+                                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center justify-between">
+                                    <span className="flex items-center gap-1.5">
+                                        <Clock size={11} className="text-fuchsia-400" /> 分段倍速流水 ({speedSegments.length} 段)
+                                    </span>
+                                    <span className="text-[9px] text-emerald-400 font-medium">
+                                        实际观影: {movie.actualWatchTime ? `${Math.floor(movie.actualWatchTime / 60)}小时${movie.actualWatchTime % 60}分` : `${movie.duration || 0}分钟`}
+                                    </span>
+                                </div>
+                                <div className="grid grid-cols-1 gap-1.5 p-2 bg-slate-950/40 rounded-lg border border-slate-800">
+                                    {speedSegments.map((seg, idx) => (
+                                        <div key={idx} className="flex items-center justify-between px-2.5 py-1.5 rounded-md bg-slate-900/80 border border-slate-800 text-[11px]">
+                                            <div className="flex items-center gap-2">
+                                                <span className="w-1.5 h-1.5 rounded-full bg-fuchsia-400"></span>
+                                                <span className="text-fuchsia-300 font-bold">第 {seg.startEp}{seg.startEp === seg.endEp ? '' : `-${seg.endEp}`} 集</span>
+                                            </div>
+                                            <div className="flex items-center gap-2">
+                                                <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/15 text-amber-300 border border-amber-500/30">
+                                                    {seg.speed}x 倍速
+                                                </span>
+                                                <span className="text-slate-500 text-[10px]">{safeFormatDate(seg.date)}</span>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* 追剧打卡足迹流水 (单集详细点阵) */}
                         {isTv && movie.watchHistory && movie.watchHistory.length > 0 && (
                             <div className="mt-3 pt-3 border-t border-slate-700/50">
                                 <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center justify-between">
                                     <span className="flex items-center gap-1.5">
-                                        <CheckCircle2 size={11} className="text-fuchsia-400" /> 追剧打卡记录 ({movie.watchHistory.length} 次)
+                                        <CheckCircle2 size={11} className="text-fuchsia-400" /> 单集打卡足迹 ({movie.watchHistory.length} 集)
                                     </span>
                                     <span className="text-[9px] text-slate-500 font-normal">最近: {formatRelativeWatchDate(movie.watchHistory[movie.watchHistory.length - 1].date)}</span>
                                 </div>
@@ -427,6 +511,9 @@ export const MovieCard: React.FC<MovieCardProps> = ({
                                     {movie.watchHistory.slice(-20).reverse().map((log, idx) => (
                                         <div key={idx} className="flex items-center gap-1 px-2 py-0.5 rounded bg-slate-800/90 border border-slate-700/60 text-[10px]">
                                             <span className="text-fuchsia-300 font-bold">第 {log.episode} 集</span>
+                                            {log.playbackSpeed && log.playbackSpeed !== 1.0 && (
+                                                <span className="text-[9px] text-amber-400 font-medium">({log.playbackSpeed}x)</span>
+                                            )}
                                             <span className="text-slate-500">·</span>
                                             <span className="text-slate-400">{safeFormatDate(log.date)}</span>
                                         </div>
