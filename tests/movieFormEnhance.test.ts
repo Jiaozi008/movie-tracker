@@ -89,4 +89,63 @@ describe('MovieForm Enhancement Tests', () => {
       expect(csv).toContain('造梦师进入他人潜意识盗取机密。');
     });
   });
+
+  describe('Phase 1 - 5 Core Elements & Silent Autofill Data Flow', () => {
+    it('should properly support 5 core interactive fields upfront', () => {
+      const state = buildInitialState({
+        id: 'core-test',
+        title: '奥本海默',
+        rating: 5,
+        quote: '我现在成了死神，世界的毁灭者。',
+        review: '诺兰的巅峰传记片，视听语言震撼。',
+        playbackSpeed: 1.0,
+        status: MovieStatus.WATCHED,
+        addedAt: 1710000000000,
+        lastUpdated: 1710000000000,
+      });
+
+      // 5 核心要素验证
+      expect(state.title).toBe('奥本海默');
+      expect(state.rating).toBe(5);
+      expect(state.quote).toBe('我现在成了死神，世界的毁灭者。');
+      expect(state.review).toBe('诺兰的巅峰传记片，视听语言震撼。');
+      expect(state.playbackSpeed).toBe('1.0');
+      expect(state.watchedDate).toBeTruthy();
+    });
+
+    it('should seamlessly accommodate background autofilled secondary metadata', () => {
+      const state = buildInitialState({
+        id: 'autofill-test',
+        title: '沙丘2',
+        year: '2024',
+        country: '美国',
+        genre: '科幻, 冒险, 动作',
+        director: '丹尼斯·维伦纽瓦',
+        cast: '提莫西·查拉梅, 赞达亚, 丽贝卡·弗格森',
+        duration: 166,
+        platform: 'IMAX 院线',
+        tmdbRating: 8.5,
+        overview: '保罗·厄崔迪携手契妮和弗雷曼人，对毁灭他家族的阴谋者展开报复。',
+        tags: ['科幻史诗', '沙丘', '维伦纽瓦'],
+        rating: 4.5,
+        quote: '愿你的刀刃碎裂破损。',
+        review: '年度最佳科幻视听！',
+        playbackSpeed: 1.0,
+        status: MovieStatus.WATCHED,
+        addedAt: 1710000000000,
+        lastUpdated: 1710000000000,
+      });
+
+      expect(state.year).toBe('2024');
+      expect(state.country).toBe('美国');
+      expect(state.genre).toBe('科幻, 冒险, 动作');
+      expect(state.director).toBe('丹尼斯·维伦纽瓦');
+      expect(state.cast).toContain('提莫西·查拉梅');
+      expect(state.duration).toBe('166');
+      expect(state.platform).toBe('IMAX 院线');
+      expect(state.tmdbRating).toBe(8.5);
+      expect(state.overview).toContain('保罗·厄崔迪');
+      expect(state.tags).toEqual(['科幻史诗', '沙丘', '维伦纽瓦']);
+    });
+  });
 });

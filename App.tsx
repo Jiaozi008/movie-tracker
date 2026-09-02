@@ -4,7 +4,7 @@ import { MovieCard } from './components/MovieCard';
 import { PosterWallCard } from './components/PosterWallCard';
 import { MovieForm } from './components/MovieForm';
 import { Button } from './components/ui/Button';
-import { Stats } from './components/Stats';
+import { Stats, TimeFrame } from './components/Stats';
 import { useMovies } from './hooks/useMovies';
 import { AiButler } from './components/AiButler';
 import { useDebounce } from './hooks/useDebounce';
@@ -16,9 +16,14 @@ import { parseImportFile, downloadFile, convertToCSV } from './utils/fileUtils';
 import { calculateEpisodeUpdate } from './utils/episodeUtils';
 import { SyncModal } from './components/SyncModal';
 import { TvMergeModal } from './components/TvMergeModal';
+import { CinematicView } from './components/CinematicView';
+import { ShareCard } from './components/ShareCard';
 import { MobileNavBar, MobileTab } from './components/MobileNavBar';
 import { ToastContainer } from './components/ui/Toast';
-import { Plus, Search, Save, Film, Tv, Download, FileJson, FileSpreadsheet, ChevronDown, Calendar, CheckSquare, Trash2, X, Upload, ArrowUpDown, Globe, ChevronLeft, ChevronRight, Menu, Cloud, LayoutGrid, Image as ImageIcon, Sparkles, Layers } from 'lucide-react';
+import { PersonCollectionBanner } from './components/PersonCollectionBanner';
+import { PersonUniverseModal } from './components/PersonUniverseModal';
+import { normalizeTitle } from './utils/titleNormalizer';
+import { Plus, Search, Save, Film, Tv, Download, FileJson, FileSpreadsheet, ChevronDown, Calendar, CheckSquare, Trash2, X, Upload, ArrowUpDown, Globe, ChevronLeft, ChevronRight, Menu, Cloud, LayoutGrid, Image as ImageIcon, Sparkles, Layers, Monitor, Trophy, FileText, Bot } from 'lucide-react';
 
 export default function App() {
     // Toast system
@@ -83,33 +88,109 @@ export default function App() {
 
     // Filter & Search States
     const [searchTerm, setSearchTerm] = useState('');
+    const librarySectionRef = useRef<HTMLDivElement>(null);
     const debouncedSearchTerm = useDebounce(searchTerm, 300); // 300ms delay
 
     const [filterStatus, setFilterStatus] = useState<string>('全部');
     const [filterMediaType, setFilterMediaType] = useState<'all' | 'movie' | 'tv'>('all');
     const [filterGenre, setFilterGenre] = useState<string>('all');
-    const [dateFilter, setDateFilter] = useState<string>('all');
+    const [filterPlatform, setFilterPlatform] = useState<string>('all');
     const [filterCountry, setFilterCountry] = useState<string>('all');
+    const [timeFrame, setTimeFrame] = useState<TimeFrame>('all');
+    const [selectedYear, setSelectedYear] = useState<string>(() => new Date().getFullYear().toString());
+    const [selectedMonth, setSelectedMonth] = useState<string>(() =>
+        `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`
+    );
     const [sortConfig, setSortConfig] = useState<{ field: string, direction: 'asc' | 'desc' }>({ field: 'addedAt', direction: 'desc' });
+    const [selectedPerson, setSelectedPerson] = useState<string | null>(null);
+    const personBannerRef = useRef<HTMLDivElement>(null);
+
+    const handleSelectPerson = (name: string | null) => {
+        if (!name || !name.trim()) {
+            setSelectedPerson(null);
+            return;
+        }
+        const trimmedName = name.trim();
+        setSelectedPerson(trimmedName);
+        setFilterStatus('全部');
+        setFilterMediaType('all');
+        setFilterGenre('all');
+        setFilterPlatform('all');
+        setFilterCountry('all');
+        setTimeFrame('all');
+        setSearchTerm('');
+        setMobileTab('library');
+        toast.info(`🎬 已激活影人全收录专栏：「${trimmedName}」`);
+
+        // 瞬间定位至影人专栏开头位置，杜绝停留在页面底部
+        requestAnimationFrame(() => {
+            setTimeout(() => {
+                if (personBannerRef.current) {
+                    personBannerRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                } else if (librarySectionRef.current) {
+                    librarySectionRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                } else {
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                }
+            }, 60);
+        });
+    };
+
+    const handleQuickAddPlanning = (title: string, meta?: { year?: string; genre?: string; director?: string; posterUrl?: string }) => {
+        const newMovie: Movie = {
+            id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(),
+            title: title.trim(),
+            year: meta?.year || '',
+            director: meta?.director || (selectedPerson || ''),
+            genre: meta?.genre || '',
+            posterImage: meta?.posterUrl,
+            posterColor: '#4f46e5',
+            review: '',
+            status: MovieStatus.PLANNING,
+            rating: 0,
+            addedAt: Date.now(),
+            lastUpdated: Date.now(),
+            mediaType: 'movie'
+        };
+        addMovie(newMovie);
+        toast.success(`已将《${title}》收入「想看」清单 🎬`);
+    };
 
     const hasActiveFilters = Boolean(
+        selectedPerson ||
         searchTerm ||
         filterStatus !== '全部' ||
         filterMediaType !== 'all' ||
         filterGenre !== 'all' ||
-        dateFilter !== 'all' ||
-        filterCountry !== 'all'
+        filterPlatform !== 'all' ||
+        filterCountry !== 'all' ||
+        timeFrame !== 'all'
     );
 
     const handleClearAllFilters = () => {
+        setSelectedPerson(null);
         setSearchTerm('');
         setFilterStatus('全部');
         setFilterMediaType('all');
         setFilterGenre('all');
-        setDateFilter('all');
+        setFilterPlatform('all');
         setFilterCountry('all');
+        setTimeFrame('all');
         toast.info('已重置所有筛选条件 🔄');
     };
+
+    // Experience Mode: 'classic' (经典全功能仪表盘) | 'cinematic' (沉浸电影殿堂)
+    const [experienceMode, setExperienceMode] = useState<'classic' | 'cinematic'>(() => {
+        return (localStorage.getItem('cinelog_experience_mode') as 'classic' | 'cinematic') || 'classic';
+    });
+
+    const handleExperienceModeToggle = (mode: 'classic' | 'cinematic') => {
+        setExperienceMode(mode);
+        localStorage.setItem('cinelog_experience_mode', mode);
+        toast.info(mode === 'cinematic' ? '已步入「沉浸电影殿堂」✨' : '已切换回「经典数据仪表盘」🏛️');
+    };
+
+    const [sharingMovie, setSharingMovie] = useState<Movie | null>(null);
 
     // View Mode State: 'grid' (标准卡片) | 'poster' (海报墙)
     const [viewMode, setViewMode] = useState<'grid' | 'poster'>(() => {
@@ -130,6 +211,9 @@ export default function App() {
     // Bulk Selection States
     const [isSelectionMode, setIsSelectionMode] = useState(false);
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+    // Person Universe Modal State (Phase 3 影人脉络全收集宇宙)
+    const [showPersonUniverse, setShowPersonUniverse] = useState(false);
 
     // File Input Ref for Import & Search Input Ref for Shortcut
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -177,8 +261,9 @@ export default function App() {
             }
         },
         onViewModeChange: handleViewModeChange,
+        onExperienceModeToggle: () => handleExperienceModeToggle(experienceMode === 'classic' ? 'cinematic' : 'classic'),
         onShowHelp: () => {
-            toast.info('⌨️ 快捷键: N (新增) | / (搜索) | 1 (卡片) | 2 (海报墙) | Esc (关闭)');
+            toast.info('⌨️ 快捷键: N (新增) | / (搜索) | C (双模穿梭) | 1 (卡片) | 2 (海报墙) | Esc (关闭)');
         },
         enabled: !isFormOpen && !isSyncModalOpen
     });
@@ -186,36 +271,20 @@ export default function App() {
     // Reset pagination when filters change
     useEffect(() => {
         setCurrentPage(1);
-    }, [debouncedSearchTerm, filterStatus, filterMediaType, filterGenre, dateFilter, filterCountry, sortConfig]);
+    }, [debouncedSearchTerm, filterStatus, filterMediaType, filterGenre, filterPlatform, filterCountry, timeFrame, selectedYear, selectedMonth, selectedPerson, sortConfig]);
 
-    // Calculate available date options from data (including watchHistory timestamps)
-    const dateOptions = useMemo(() => {
-        const yearsSet = new Set<number>();
-        const monthsSet = new Set<string>();
-
+    // Calculate available platform options (观看平台)
+    const platformOptions = useMemo(() => {
+        const platforms = new Set<string>();
         movies.forEach(m => {
-            if (m.addedAt) {
-                const d = new Date(m.addedAt);
-                yearsSet.add(d.getFullYear());
-                const monthStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-                monthsSet.add(monthStr);
-            }
-            if (m.watchHistory && Array.isArray(m.watchHistory)) {
-                m.watchHistory.forEach(log => {
-                    if (log.date) {
-                        const d = new Date(log.date);
-                        yearsSet.add(d.getFullYear());
-                        const monthStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-                        monthsSet.add(monthStr);
-                    }
+            if (m.platform && m.platform.trim()) {
+                const parts = m.platform.split(/[,，/、]+/).map(p => p.trim());
+                parts.forEach(p => {
+                    if (p && p.length > 0) platforms.add(p);
                 });
             }
         });
-
-        const sortedYears = Array.from(yearsSet).sort((a, b) => b - a);
-        const sortedMonths = Array.from(monthsSet).sort((a, b) => b.localeCompare(a));
-
-        return { years: sortedYears, months: sortedMonths };
+        return Array.from(platforms).sort((a, b) => a.localeCompare(b, 'zh-CN'));
     }, [movies]);
 
     // Calculate available country options
@@ -367,38 +436,25 @@ export default function App() {
                 matchesStatus = movie.status === filterStatus;
             }
 
-            // 3. Date Filter (Check both addedAt and watchHistory dates)
+            // 3. Time Filter (根据统计面板中的全部/按年/按月联动筛选，聚合 addedAt 和 watchHistory)
             let matchesDate = true;
-            if (dateFilter !== 'all') {
-                const checkTimestamp = (ts: number): boolean => {
-                    const d = new Date(ts);
-                    const now = new Date();
+            if (timeFrame !== 'all') {
+                const hasWatchHistoryInYear = movie.watchHistory && movie.watchHistory.some(log => {
+                    return new Date(log.date).getFullYear().toString() === selectedYear;
+                });
+                const hasWatchHistoryInMonth = movie.watchHistory && movie.watchHistory.some(log => {
+                    const logDate = new Date(log.date);
+                    const logYM = `${logDate.getFullYear()}-${String(logDate.getMonth() + 1).padStart(2, '0')}`;
+                    return logYM === selectedMonth;
+                });
 
-                    if (dateFilter === '7d') {
-                        const cutoff = new Date();
-                        cutoff.setDate(now.getDate() - 7);
-                        return d >= cutoff;
-                    }
-                    if (dateFilter === '30d') {
-                        const cutoff = new Date();
-                        cutoff.setDate(now.getDate() - 30);
-                        return d >= cutoff;
-                    }
-                    if (dateFilter.startsWith('year_')) {
-                        const year = parseInt(dateFilter.split('_')[1]);
-                        return d.getFullYear() === year;
-                    }
-                    if (dateFilter.startsWith('month_')) {
-                        const targetYM = dateFilter.replace('month_', '');
-                        const movieYM = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-                        return targetYM === movieYM;
-                    }
-                    return true;
-                };
-
-                const addedAtMatches = checkTimestamp(movie.addedAt);
-                const historyMatches = movie.watchHistory && movie.watchHistory.some(log => checkTimestamp(log.date));
-                matchesDate = addedAtMatches || !!historyMatches;
+                const d = new Date(movie.addedAt);
+                if (timeFrame === 'year') {
+                    matchesDate = d.getFullYear().toString() === selectedYear || !!hasWatchHistoryInYear;
+                } else if (timeFrame === 'month') {
+                    const movieMonth = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+                    matchesDate = movieMonth === selectedMonth || !!hasWatchHistoryInMonth;
+                }
             }
 
             // 4. Media Classification Filter (分类筛选: 电影 vs 电视剧)
@@ -412,12 +468,24 @@ export default function App() {
             // 5. Genre Filter (类型筛选: 动作, 剧情, 科幻...)
             const matchesGenre = filterGenre === 'all' || (movie.genre && movie.genre.includes(filterGenre));
 
-            // 6. Country Filter (地区筛选)
+            // 6. Platform Filter (观看平台筛选)
+            const matchesPlatform = filterPlatform === 'all' || (movie.platform && movie.platform.includes(filterPlatform));
+
+            // 7. Country Filter (地区筛选)
             const matchesCountry = filterCountry === 'all' || (movie.country && movie.country.includes(filterCountry));
 
-            return matchesSearch && matchesStatus && matchesDate && matchesMediaType && matchesGenre && matchesCountry;
+            // 8. Person Filter (影人全收录专栏筛选: 导演或主演)
+            let matchesPerson = true;
+            if (selectedPerson) {
+                const normPerson = normalizeTitle(selectedPerson);
+                const dirNorm = normalizeTitle(movie.director || '');
+                const castNorm = normalizeTitle(movie.cast || '');
+                matchesPerson = dirNorm.includes(normPerson) || castNorm.includes(normPerson);
+            }
+
+            return matchesSearch && matchesStatus && matchesDate && matchesMediaType && matchesGenre && matchesPlatform && matchesCountry && matchesPerson;
         });
-    }, [movies, debouncedSearchTerm, filterStatus, filterMediaType, filterGenre, dateFilter, filterCountry]);
+    }, [movies, debouncedSearchTerm, filterStatus, filterMediaType, filterGenre, filterPlatform, filterCountry, timeFrame, selectedYear, selectedMonth, selectedPerson]);
 
     const sortedMovies = useMemo(() => {
         const data = [...filteredMovies];
@@ -457,7 +525,13 @@ export default function App() {
     const handlePageChange = (page: number) => {
         if (page >= 1 && page <= totalPages) {
             setCurrentPage(page);
-            window.scrollTo({ top: 0, behavior: 'smooth' });
+            if (librarySectionRef.current) {
+                // 平滑滚动至影库卡片与筛选栏顶部，保留顶部导航栏空间
+                const targetY = librarySectionRef.current.getBoundingClientRect().top + window.scrollY - 70;
+                window.scrollTo({ top: Math.max(0, targetY), behavior: 'smooth' });
+            } else {
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+            }
         }
     };
 
@@ -492,9 +566,27 @@ export default function App() {
                         <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center shadow-lg shadow-indigo-500/20">
                             <Film size={20} className="text-white" />
                         </div>
-                        <span className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-slate-400">
+                        <span className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-slate-400 hidden xs:inline">
                             CineLog AI
                         </span>
+
+                        {/* Dual-Experience Switcher Pill */}
+                        <div className="flex items-center p-0.5 bg-slate-800/90 rounded-full border border-slate-700/80 shadow-inner ml-1 sm:ml-3">
+                            <button
+                                onClick={() => handleExperienceModeToggle('classic')}
+                                className={`flex items-center gap-1 px-2.5 sm:px-3 py-1 rounded-full text-xs font-semibold transition-all ${experienceMode === 'classic' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200'}`}
+                                title="经典全功能数据仪表盘"
+                            >
+                                <span>🏛️</span> <span className="text-[11px] sm:text-xs">经典数据</span>
+                            </button>
+                            <button
+                                onClick={() => handleExperienceModeToggle('cinematic')}
+                                className={`flex items-center gap-1 px-2.5 sm:px-3 py-1 rounded-full text-xs font-semibold transition-all ${experienceMode === 'cinematic' ? 'bg-gradient-to-r from-amber-500 to-amber-600 text-slate-950 shadow-md font-bold' : 'text-slate-400 hover:text-slate-200'}`}
+                                title="沉浸电影殿堂模式"
+                            >
+                                <span>🎬</span> <span className="text-[11px] sm:text-xs">电影殿堂</span>
+                            </button>
+                        </div>
                     </div>
 
                     <div className="flex items-center gap-4">
@@ -538,12 +630,12 @@ export default function App() {
                                 {showExportMenu && (
                                     <>
                                         <div className="fixed inset-0 z-40" onClick={() => setShowExportMenu(false)}></div>
-                                        <div className="absolute right-0 mt-2 w-40 bg-slate-800 rounded-lg shadow-xl border border-slate-700 overflow-hidden z-50">
+                                        <div className="absolute right-0 mt-2 min-w-[180px] bg-slate-800 rounded-lg shadow-xl border border-slate-700 overflow-hidden z-50 py-1">
                                             <button
                                                 onClick={() => { downloadFile(JSON.stringify(movies, null, 2), 'json'); setShowExportMenu(false); }}
-                                                className="w-full px-4 py-3 text-left text-sm text-slate-300 hover:bg-slate-700 hover:text-white transition-colors flex items-center gap-2"
+                                                className="w-full px-4 py-2.5 text-left text-sm text-slate-300 hover:bg-slate-700 hover:text-white transition-colors flex items-center gap-2.5 whitespace-nowrap"
                                             >
-                                                <FileJson size={14} /> 导出 JSON
+                                                <FileJson size={14} className="shrink-0" /> 导出 JSON
                                             </button>
                                             <button
                                                 onClick={() => {
@@ -551,21 +643,52 @@ export default function App() {
                                                     downloadFile(csv, 'csv');
                                                     setShowExportMenu(false);
                                                 }}
-                                                className="w-full px-4 py-3 text-left text-sm text-slate-300 hover:bg-slate-700 hover:text-white transition-colors flex items-center gap-2 border-t border-slate-700"
+                                                className="w-full px-4 py-2.5 text-left text-sm text-slate-300 hover:bg-slate-700 hover:text-white transition-colors flex items-center gap-2.5 border-t border-slate-700/60 whitespace-nowrap"
                                             >
-                                                <FileSpreadsheet size={14} /> 导出 CSV
+                                                <FileSpreadsheet size={14} className="shrink-0" /> 导出 CSV
                                             </button>
                                             <button
                                                 onClick={() => { setIsTvMergeOpen(true); setShowExportMenu(false); }}
-                                                className="w-full px-4 py-3 text-left text-sm text-fuchsia-300 hover:bg-slate-700 hover:text-white transition-colors flex items-center gap-2 border-t border-slate-700 font-medium"
+                                                className="w-full px-4 py-2.5 text-left text-sm text-fuchsia-300 hover:bg-slate-700 hover:text-white transition-colors flex items-center gap-2.5 border-t border-slate-700/60 font-medium whitespace-nowrap"
                                             >
-                                                <Sparkles size={14} className="text-fuchsia-400" /> 智能合并同剧分段
+                                                <Sparkles size={14} className="text-fuchsia-400 shrink-0" /> 智能合并同剧
                                             </button>
                                         </div>
                                     </>
                                 )}
                             </div>
                         </div>
+
+                        <Button
+                            onClick={() => setShowPersonUniverse(true)}
+                            variant="secondary"
+                            size="sm"
+                            className="hidden sm:flex shadow-sm text-amber-300 hover:text-amber-200 border-amber-500/30 hover:bg-amber-500/10 items-center gap-1.5"
+                            title="影人脉络宇宙与全收集总排行榜"
+                        >
+                            <Trophy size={15} className="text-amber-400" />
+                            <span>影人宇宙</span>
+                        </Button>
+
+                        {/* 移动端顶部金标：影人宇宙直达入口 */}
+                        <button
+                            onClick={() => setShowPersonUniverse(true)}
+                            className="sm:hidden flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 active:scale-95 transition-all text-xs font-semibold shadow-sm shadow-amber-500/10 shrink-0"
+                            title="影人脉络宇宙与全收集总排行榜"
+                        >
+                            <Trophy size={13} className="text-amber-400 shrink-0" />
+                            <span>影人宇宙</span>
+                        </button>
+
+                        {/* 移动端顶部 AI 助手入口 */}
+                        <button
+                            onClick={() => setIsAiButlerOpen(true)}
+                            className="sm:hidden p-1.5 text-indigo-400 hover:text-indigo-300 hover:bg-slate-800/80 rounded-lg transition-colors relative"
+                            title="AI 观影管家"
+                        >
+                            <Bot size={19} />
+                            <span className="absolute top-1 right-1 w-2 h-2 bg-pink-500 rounded-full animate-pulse" />
+                        </button>
 
                         <Button onClick={() => toggleSelectionMode()} variant={isSelectionMode ? "primary" : "secondary"} size="sm" className="hidden sm:flex shadow-lg">
                             <CheckSquare size={16} className="mr-1" /> {isSelectionMode ? '退出管理' : '批量管理'}
@@ -601,6 +724,20 @@ export default function App() {
                                     <div className="p-3 border-b border-slate-700/50 bg-slate-900/50">
                                         <div className="text-xs font-bold text-slate-500 uppercase tracking-wider">数据管理</div>
                                     </div>
+
+                                    <button
+                                        onClick={() => { setShowPersonUniverse(true); setShowMobileMenu(false); }}
+                                        className="w-full px-4 py-3 text-left text-sm text-amber-300 hover:bg-slate-700 hover:text-white transition-colors flex items-center gap-3 font-medium"
+                                    >
+                                        <Trophy size={18} className="text-amber-400" /> 影人脉络宇宙
+                                    </button>
+
+                                    <button
+                                        onClick={() => { setIsAiButlerOpen(true); setShowMobileMenu(false); }}
+                                        className="w-full px-4 py-3 text-left text-sm text-indigo-300 hover:bg-slate-700 hover:text-white transition-colors flex items-center gap-3 font-medium"
+                                    >
+                                        <Bot size={18} className="text-indigo-400" /> AI 观影管家
+                                    </button>
 
                                     <button
                                         onClick={() => { setIsSyncModalOpen(true); setShowMobileMenu(false); }}
@@ -648,28 +785,41 @@ export default function App() {
             </nav>
 
             <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
-
-                {/* 统计看板：移动端在 'stats' Tab 下展示，桌面端始终保留顶部展示 */}
-                <div className={mobileTab === 'stats' ? 'block animate-in fade-in duration-200' : 'hidden sm:block'}>
-                    <Stats
+                {experienceMode === 'cinematic' ? (
+                    <CinematicView
                         movies={movies}
-                        onToast={(msg, type) => toast[type](msg)}
-                        onSelectPerson={(name) => {
-                            setFilterStatus('全部');
-                            setFilterMediaType('all');
-                            setFilterGenre('all');
-                            setDateFilter('all');
-                            setFilterCountry('all');
-                            setSearchTerm(name);
-                            setMobileTab('library');
-                            searchInputRef.current?.focus();
-                            toast.info(`已筛选影人：「${name}」`);
-                        }}
+                        allMovies={movies}
+                        onEdit={openEdit}
+                        onDelete={deleteMovie}
+                        onQuickEpisodeUpdate={handleQuickEpisodeUpdate}
+                        onSelectMovie={openEdit}
+                        onShareMovie={(m) => setSharingMovie(m)}
+                        onAddNew={() => { setEditingMovie(null); setIsFormOpen(true); }}
+                        onSwitchToClassic={() => handleExperienceModeToggle('classic')}
+                        selectedPerson={selectedPerson}
+                        onSelectPerson={handleSelectPerson}
+                        onQuickAddPlanning={handleQuickAddPlanning}
                     />
-                </div>
+                ) : (
+                    <>
+                        {/* 统计看板：移动端在 'stats' Tab 下展示，桌面端始终保留顶部展示 */}
+                        <div className={mobileTab === 'stats' ? 'block animate-in fade-in duration-200' : 'hidden sm:block'}>
+                            <Stats
+                                movies={movies}
+                                timeFrame={timeFrame}
+                                onTimeFrameChange={setTimeFrame}
+                                selectedYear={selectedYear}
+                                onSelectedYearChange={setSelectedYear}
+                                selectedMonth={selectedMonth}
+                                onSelectedMonthChange={setSelectedMonth}
+                                onToast={(msg, type) => toast[type](msg)}
+                                onSelectPerson={handleSelectPerson}
+                                onOpenPersonUniverse={() => setShowPersonUniverse(true)}
+                            />
+                        </div>
 
                 {/* 影库列表与筛选区：移动端在 'library' Tab 下展示，桌面端始终展示 */}
-                <div className={mobileTab === 'library' ? 'block animate-in fade-in duration-200' : 'hidden sm:block'}>
+                <div ref={librarySectionRef} className={mobileTab === 'library' ? 'block animate-in fade-in duration-200' : 'hidden sm:block'}>
                     {/* Filters & Search */}
                 <div className="flex flex-col md:flex-row gap-4 mb-6 sticky top-16 z-20 bg-slate-900/95 p-3 -mx-4 sm:-mx-2 sm:rounded-xl border-y sm:border border-slate-800/50 backdrop-blur-sm shadow-xl shadow-black/20">
                     {isSelectionMode ? (
@@ -820,36 +970,20 @@ export default function App() {
                                         <ChevronDown size={14} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
                                     </div>
 
-                                    {/* 5. 时间 */}
+                                    {/* 5. 观看平台 */}
                                     <div className="relative min-w-0 sm:min-w-[105px] flex-1 col-span-2 sm:col-span-1">
                                         <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none">
-                                            <Calendar size={14} />
+                                            <Monitor size={14} />
                                         </div>
                                         <select
-                                            value={dateFilter}
-                                            onChange={(e) => setDateFilter(e.target.value)}
+                                            value={filterPlatform}
+                                            onChange={(e) => setFilterPlatform(e.target.value)}
                                             className="w-full appearance-none bg-slate-800 border border-slate-700 rounded-lg pl-8 pr-7 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none text-slate-300 hover:text-white cursor-pointer transition-colors truncate"
                                         >
-                                            <optgroup label="快捷筛选">
-                                                <option value="all">全部时间</option>
-                                                <option value="7d">最近 7 天</option>
-                                                <option value="30d">最近 30 天</option>
-                                            </optgroup>
-                                            {dateOptions.years.length > 0 && (
-                                                <optgroup label="按年份">
-                                                    {dateOptions.years.map(y => (
-                                                        <option key={y} value={`year_${y}`}>{y} 年</option>
-                                                    ))}
-                                                </optgroup>
-                                            )}
-                                            {dateOptions.months.length > 0 && (
-                                                <optgroup label="按月份">
-                                                    {dateOptions.months.map(m => {
-                                                        const [y, mon] = m.split('-');
-                                                        return <option key={m} value={`month_${m}`}>{y}年 {mon}月</option>;
-                                                    })}
-                                                </optgroup>
-                                            )}
+                                            <option value="all">所有平台</option>
+                                            {platformOptions.map(p => (
+                                                <option key={p} value={p}>{p}</option>
+                                            ))}
                                         </select>
                                         <ChevronDown size={14} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
                                     </div>
@@ -896,6 +1030,45 @@ export default function App() {
                     )}
                 </div>
 
+                {/* Person Filmography Collection Progress Bar (影人全收录进度条专栏) */}
+                {selectedPerson && (
+                    <div ref={personBannerRef} id="person-collection-section" className="scroll-mt-20 sm:scroll-mt-24">
+                        <PersonCollectionBanner
+                            personName={selectedPerson}
+                            allMovies={movies}
+                            onClose={() => setSelectedPerson(null)}
+                            currentFilterStatus={filterStatus}
+                            onFilterStatusChange={setFilterStatus}
+                            onQuickAddPlanning={handleQuickAddPlanning}
+                        />
+                    </div>
+                )}
+
+                {/* 移动端常驻影人宇宙探索卡片 (仅移动端且未激活特定影人专栏时展示) */}
+                {!selectedPerson && (
+                    <div className="sm:hidden mb-4 p-3 rounded-xl bg-gradient-to-r from-amber-500/10 via-indigo-500/10 to-purple-500/10 border border-amber-500/25 shadow-lg shadow-amber-500/5 flex items-center justify-between gap-2.5">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                            <div className="w-8 h-8 rounded-lg bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400 shrink-0">
+                                <Trophy size={16} />
+                            </div>
+                            <div className="min-w-0">
+                                <div className="flex items-center gap-1.5">
+                                    <h4 className="text-xs font-bold text-amber-200 truncate">影人脉络宇宙</h4>
+                                    <span className="text-[10px] px-1.5 py-0.2 bg-amber-500/20 text-amber-300 rounded font-medium">全收集</span>
+                                </div>
+                                <p className="text-[10px] text-slate-400 truncate">名导演员代表作基准 · 阅片大满贯榜</p>
+                            </div>
+                        </div>
+                        <button
+                            onClick={() => setShowPersonUniverse(true)}
+                            className="px-2.5 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 text-xs font-bold border border-amber-500/30 shrink-0 active:scale-95 transition-all flex items-center gap-0.5 whitespace-nowrap"
+                        >
+                            <span>探索</span>
+                            <ChevronRight size={13} />
+                        </button>
+                    </div>
+                )}
+
                 {/* Movie Grid / Poster Wall */}
                 {sortedMovies.length === 0 ? (
                     <div className="text-center py-20 border-2 border-dashed border-slate-800 rounded-3xl bg-slate-900/50">
@@ -905,7 +1078,7 @@ export default function App() {
                         <h3 className="text-xl font-medium text-slate-300 mb-2">未找到记录</h3>
                         <p className="text-slate-500 max-w-sm mx-auto mb-6">
                             {hasActiveFilters
-                                ? "尝试调整搜索、分类、类型、地区、时间或状态筛选条件。"
+                                ? "尝试调整搜索、分类、类型、地区、平台或状态筛选条件。"
                                 : "添加你看过的第一部电影或电视剧吧。"}
                         </p>
                         {hasActiveFilters ? (
@@ -919,7 +1092,7 @@ export default function App() {
                 ) : (
                     <>
                         {viewMode === 'poster' ? (
-                            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 sm:gap-4.5">
+                            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 sm:gap-4.5 items-start">
                                 {currentDisplayedMovies.map(movie => (
                                     <PosterWallCard
                                         key={movie.id}
@@ -931,6 +1104,7 @@ export default function App() {
                                             const m = movies.find(x => x.id === id);
                                             if (m) handleQuickEpisodeUpdate(m, 1);
                                         }}
+                                        onSelectPerson={handleSelectPerson}
                                         isSelectionMode={isSelectionMode}
                                         isSelected={selectedIds.has(movie.id)}
                                         onToggleSelect={toggleSelectMovie}
@@ -939,7 +1113,7 @@ export default function App() {
                                 ))}
                             </div>
                         ) : (
-                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6 items-start">
                                 {currentDisplayedMovies.map(movie => (
                                     <MovieCard
                                         key={movie.id}
@@ -948,6 +1122,7 @@ export default function App() {
                                         onEdit={openEdit}
                                         onDelete={deleteMovie}
                                         onQuickEpisodeUpdate={handleQuickEpisodeUpdate}
+                                        onSelectPerson={handleSelectPerson}
                                         isSelectionMode={isSelectionMode}
                                         isSelected={selectedIds.has(movie.id)}
                                         onToggleSelect={toggleSelectMovie}
@@ -968,7 +1143,14 @@ export default function App() {
                                 <div className="flex flex-col sm:flex-row items-center gap-4 w-full sm:w-auto">
                                     <select
                                         value={itemsPerPage}
-                                        onChange={(e) => { setItemsPerPage(Number(e.target.value)); setCurrentPage(1); }}
+                                        onChange={(e) => {
+                                            setItemsPerPage(Number(e.target.value));
+                                            setCurrentPage(1);
+                                            if (librarySectionRef.current) {
+                                                const targetY = librarySectionRef.current.getBoundingClientRect().top + window.scrollY - 70;
+                                                window.scrollTo({ top: Math.max(0, targetY), behavior: 'smooth' });
+                                            }
+                                        }}
                                         className="bg-slate-900 border border-slate-700 text-slate-300 text-sm rounded-lg focus:ring-indigo-500 focus:border-indigo-500 block p-1.5 outline-none w-full sm:w-auto"
                                     >
                                         <option value={12}>每页 12 条</option>
@@ -1004,7 +1186,18 @@ export default function App() {
                     </>
                 )}
                 </div>
+                </>
+                )}
             </main>
+
+            {/* Share Card Modal */}
+            {sharingMovie && (
+                <ShareCard
+                    movie={sharingMovie}
+                    onClose={() => setSharingMovie(null)}
+                    onToast={(msg, type) => toast.addToast(msg, type)}
+                />
+            )}
 
             {/* Modal */}
             {isFormOpen && (
@@ -1045,6 +1238,20 @@ export default function App() {
                 onToast={(msg, type) => toast[type](msg)}
             />
 
+            {/* Person Universe & Filmography Mastery Modal (Phase 3 影人脉络宇宙) */}
+            <PersonUniverseModal
+                isOpen={showPersonUniverse}
+                onClose={() => {
+                    setShowPersonUniverse(false);
+                    if (mobileTab === 'universe') {
+                        setMobileTab('library');
+                    }
+                }}
+                movies={movies}
+                onSelectPerson={handleSelectPerson}
+                onQuickAddPlanning={handleQuickAddPlanning}
+            />
+
             {/* AI Butler */}
             <AiButler
                 movies={movies}
@@ -1058,8 +1265,12 @@ export default function App() {
             <MobileNavBar
                 activeTab={mobileTab}
                 onTabChange={(tab) => {
-                    setMobileTab(tab);
-                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                    if (tab === 'universe') {
+                        setShowPersonUniverse(true);
+                    } else {
+                        setMobileTab(tab);
+                        window.scrollTo({ top: 0, behavior: 'smooth' });
+                    }
                 }}
                 onOpenAddMovie={() => {
                     setEditingMovie(null);
@@ -1067,6 +1278,7 @@ export default function App() {
                 }}
                 onOpenAiButler={() => setIsAiButlerOpen(true)}
                 onOpenSettings={() => setIsSyncModalOpen(true)}
+                onOpenPersonUniverse={() => setShowPersonUniverse(true)}
             />
 
             {/* Toast Notifications */}

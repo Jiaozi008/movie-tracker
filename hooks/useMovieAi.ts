@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import { Movie, MovieStatus, MediaType } from '../types';
-import { fetchMovieMetadata, generateAiReview } from '../services/geminiService';
+import { fetchMovieMetadata, generateAiReview, generateAiQuote } from '../services/geminiService';
 
 interface UseMovieAiOptions {
     existingMovies: Movie[];
@@ -9,6 +9,9 @@ interface UseMovieAiOptions {
     mediaType: MediaType;
     rating: number;
     title: string;
+    year?: string;
+    director?: string;
+    overview?: string;
     onMetadataFetched: (data: {
         title: string;
         year: string;
@@ -22,8 +25,10 @@ interface UseMovieAiOptions {
         currentEpisode?: number;
         overview?: string;
         tags?: string[];
+        quote?: string;
     }) => void;
     onReviewGenerated: (review: string) => void;
+    onQuoteGenerated?: (quote: string) => void;
     onError: (msg: string) => void;
 }
 
@@ -34,12 +39,17 @@ export const useMovieAi = ({
     mediaType,
     rating,
     title,
+    year,
+    director,
+    overview,
     onMetadataFetched,
     onReviewGenerated,
+    onQuoteGenerated,
     onError,
 }: UseMovieAiOptions) => {
     const [isAiLoading, setIsAiLoading] = useState(false);
     const [isReviewLoading, setIsReviewLoading] = useState(false);
+    const [isQuoteLoading, setIsQuoteLoading] = useState(false);
 
     const handleAiFill = useCallback(async () => {
         if (!title) return;
@@ -77,6 +87,7 @@ export const useMovieAi = ({
                         : undefined,
                     overview: data.summary,
                     tags: data.tags,
+                    quote: data.quote,
                 });
             }
         } catch (error: any) {
@@ -106,5 +117,31 @@ export const useMovieAi = ({
         }
     }, [title, rating, mediaType, onReviewGenerated, onError]);
 
-    return { isAiLoading, isReviewLoading, handleAiFill, handleAiReview };
+    const handleAiQuote = useCallback(async () => {
+        if (!title) return;
+        setIsQuoteLoading(true);
+        try {
+            const generatedQuote = await generateAiQuote(
+                title,
+                mediaType,
+                year,
+                director,
+                overview,
+                (accumulatedText) => {
+                    if (onQuoteGenerated) {
+                        onQuoteGenerated(accumulatedText);
+                    }
+                }
+            );
+            if (onQuoteGenerated) {
+                onQuoteGenerated(generatedQuote);
+            }
+        } catch (error: any) {
+            onError(error.message || '生成经典台词失败');
+        } finally {
+            setIsQuoteLoading(false);
+        }
+    }, [title, mediaType, year, director, overview, onQuoteGenerated, onError]);
+
+    return { isAiLoading, isReviewLoading, isQuoteLoading, handleAiFill, handleAiReview, handleAiQuote };
 };

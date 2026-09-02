@@ -3,6 +3,7 @@ import React, { useRef, useState } from 'react';
 import ReactDOM from 'react-dom';
 import { Movie } from '../types';
 import html2canvas from 'html2canvas';
+import { safeFormatDate } from '../utils/dateUtils';
 import { X, Download, Star, Film, Tv, Clock, User, Users, Copy, Check } from 'lucide-react';
 
 interface ShareCardProps {
@@ -183,6 +184,16 @@ export const ShareCard: React.FC<ShareCardProps> = ({ movie, onClose, onToast })
                             )}
                         </div>
 
+                        {/* Quote or Review */}
+                        {movie.quote && (
+                            <div className="relative pl-3 py-1 bg-amber-500/10 rounded-lg border border-amber-500/20">
+                                <div className="absolute left-1 top-2 bottom-2 w-0.5 bg-amber-400 rounded-full" />
+                                <p className="text-xs text-amber-200/90 font-serif italic leading-relaxed line-clamp-3">
+                                    “{movie.quote}”
+                                </p>
+                            </div>
+                        )}
+
                         {/* Review Quote */}
                         {movie.review && (
                             <div className="relative">
@@ -204,7 +215,7 @@ export const ShareCard: React.FC<ShareCardProps> = ({ movie, onClose, onToast })
                                 </span>
                             </div>
                             <span className="text-[10px] text-slate-600">
-                                {new Date(movie.addedAt).toLocaleDateString('zh-CN')} 观影
+                                {safeFormatDate(movie.addedAt)} 观影
                             </span>
                         </div>
                     </div>

@@ -10,6 +10,7 @@ interface PosterWallCardProps {
     onEdit: (movie: Movie) => void;
     onDelete: (id: string) => void;
     onQuickEpisodeUpdate?: (id: string, newEpisode: number) => void;
+    onSelectPerson?: (name: string) => void;
     isSelectionMode?: boolean;
     isSelected?: boolean;
     onToggleSelect?: (id: string) => void;
@@ -22,6 +23,7 @@ export const PosterWallCard: React.FC<PosterWallCardProps> = ({
     onEdit,
     onDelete,
     onQuickEpisodeUpdate,
+    onSelectPerson,
     isSelectionMode = false,
     isSelected = false,
     onToggleSelect,
@@ -99,8 +101,14 @@ export const PosterWallCard: React.FC<PosterWallCardProps> = ({
                         )}
                     </div>
 
-                    {/* TMDB Score & Rewatch */}
+                    {/* Masterpiece, Speed & Rewatch Assets */}
                     <div className="flex flex-col items-end gap-1">
+                        {movie.rating >= 4.5 && (
+                            <span className="inline-flex items-center gap-0.5 h-5 px-1.5 rounded-md text-[9px] font-black bg-gradient-to-r from-amber-500 to-yellow-400 text-slate-950 shadow-md">
+                                ★ 殿堂
+                            </span>
+                        )}
+
                         {movie.tmdbRating && movie.tmdbRating > 0 && (
                             <span className="inline-flex items-center gap-0.5 h-5 px-1.5 rounded-md text-[10px] font-extrabold bg-black/70 text-amber-300 border border-amber-400/30 backdrop-blur-md shadow-md">
                                 <Star size={9} className="text-amber-400 fill-amber-400" />
@@ -109,8 +117,14 @@ export const PosterWallCard: React.FC<PosterWallCardProps> = ({
                         )}
 
                         {movie.watchIteration && movie.watchIteration > 1 && (
-                            <span className="inline-flex items-center h-5 px-1.5 rounded-md text-[10px] font-extrabold bg-orange-600/90 text-white shadow-md">
-                                {movie.watchIteration}刷
+                            <span className="inline-flex items-center h-5 px-1.5 rounded-md text-[9px] font-extrabold bg-gradient-to-r from-orange-600 to-amber-600 text-white shadow-md">
+                                🔥 {movie.watchIteration}刷
+                            </span>
+                        )}
+
+                        {movie.playbackSpeed && movie.playbackSpeed !== 1.0 && (
+                            <span className="inline-flex items-center h-4.5 px-1.5 rounded-md text-[9px] font-bold bg-black/70 text-amber-300 border border-amber-500/30 backdrop-blur-md">
+                                ⚡{movie.playbackSpeed}x
                             </span>
                         )}
                     </div>
@@ -159,13 +173,28 @@ export const PosterWallCard: React.FC<PosterWallCardProps> = ({
 
                 {/* 7. Hover Actions Glassmorphism Bar */}
                 {!isSelectionMode && (
-                    <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm opacity-0 group-hover:opacity-100 transition-opacity duration-300 z-20 flex flex-col items-center justify-center p-4 gap-3 text-center pointer-events-none group-hover:pointer-events-auto">
+                    <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm opacity-0 group-hover:opacity-100 transition-opacity duration-300 z-20 flex flex-col items-center justify-center p-4 gap-2 text-center pointer-events-none group-hover:pointer-events-auto">
                         <h4 className="text-sm font-bold text-white line-clamp-2">{movie.title}</h4>
                         <p className="text-xs text-slate-300 line-clamp-2 italic">
                             {movie.review ? `"${movie.review}"` : (movie.overview || `${movie.genre || ''} · ${movie.year || ''}`)}
                         </p>
 
-                        <div className="flex items-center gap-2 mt-2">
+                        {movie.director && (
+                            <button
+                                type="button"
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    const dir = movie.director?.split(/[,，/、\s]+/)[0]?.trim();
+                                    if (dir && onSelectPerson) onSelectPerson(dir);
+                                }}
+                                className="px-2 py-0.5 rounded-full bg-indigo-950/70 hover:bg-indigo-600 border border-indigo-500/40 text-indigo-300 hover:text-white text-[11px] font-medium transition-all shadow-sm active:scale-95"
+                                title={`查看「${movie.director}」作品收录进度`}
+                            >
+                                🎬 {movie.director}
+                            </button>
+                        )}
+
+                        <div className="flex items-center gap-2 mt-1">
                             {isTv && (
                                 <button
                                     onClick={handleQuickEpisode}

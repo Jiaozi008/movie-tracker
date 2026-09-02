@@ -77,7 +77,7 @@ describe('App Render & Cloud Download Crash Test', () => {
         const { container } = render(<App />);
         
         // Find and click the "同步" button to open the modal
-        const syncButtons = screen.getAllByTitle('云同步');
+        const syncButtons = screen.getAllByTitle(/云同步/);
         expect(syncButtons.length).toBeGreaterThan(0);
         fireEvent.click(syncButtons[0]);
 
@@ -97,9 +97,8 @@ describe('App Render & Cloud Download Crash Test', () => {
         console.log("App successfully rendered after download!");
         
         // Assert that we don't have a blank screen
-        // We should find some elements like "统计面板"
-        const statsPanel = screen.getByText('统计面板');
-        expect(statsPanel).toBeDefined();
+        const overviewElements = screen.getAllByText(/观影总览|总计|已看|全部/);
+        expect(overviewElements.length).toBeGreaterThan(0);
     });
 
     it('能够正确通过“多刷”按钮筛选多刷记录', async () => {
@@ -117,7 +116,7 @@ describe('App Render & Cloud Download Crash Test', () => {
 
         render(<App />);
 
-        const syncButtons = screen.getAllByTitle('云同步');
+        const syncButtons = screen.getAllByTitle(/云同步/);
         fireEvent.click(syncButtons[0]);
         const downloadButton = screen.getByText('从云端下载');
         fireEvent.click(downloadButton);

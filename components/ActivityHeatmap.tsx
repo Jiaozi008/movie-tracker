@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { Movie, MovieStatus } from '../types';
 import { Flame, Calendar, Trophy, Sparkles, Film, Tv, ChevronRight } from 'lucide-react';
+import { formatLocalDateKey } from '../utils/dateUtils';
 
 interface ActivityHeatmapProps {
     movies: Movie[];
@@ -22,7 +23,7 @@ interface DayData {
 }
 
 const formatDateKey = (d: Date): string => {
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    return formatLocalDateKey(d);
 };
 
 export const ActivityHeatmap: React.FC<ActivityHeatmapProps> = ({ movies }) => {
@@ -60,6 +61,11 @@ export const ActivityHeatmap: React.FC<ActivityHeatmapProps> = ({ movies }) => {
                     years.add(new Date(h.date).getFullYear().toString());
                 });
             }
+            if (m.rewatchHistory) {
+                m.rewatchHistory.forEach(rh => {
+                    years.add(new Date(rh.date).getFullYear().toString());
+                });
+            }
         });
         return Array.from(years).sort((a, b) => b.localeCompare(a));
     }, [movies, currentYear]);
@@ -75,7 +81,8 @@ export const ActivityHeatmap: React.FC<ActivityHeatmapProps> = ({ movies }) => {
             if (movie.mediaType === 'tv') {
                 if (movie.watchHistory && movie.watchHistory.length > 0) {
                     movie.watchHistory.forEach(log => {
-                        const key = formatDateKey(new Date(log.date));
+                        const key = formatLocalDateKey(log.date);
+                        if (!key) return;
                         const current = map.get(key) || [];
                         current.push({
                             title: movie.title,
@@ -85,26 +92,44 @@ export const ActivityHeatmap: React.FC<ActivityHeatmapProps> = ({ movies }) => {
                         map.set(key, current);
                     });
                 } else if (movie.addedAt) {
-                    const key = formatDateKey(new Date(movie.addedAt));
-                    const current = map.get(key) || [];
-                    current.push({
-                        title: movie.title,
-                        type: 'tv',
-                        episode: movie.currentEpisode || 1
-                    });
-                    map.set(key, current);
+                    const key = formatLocalDateKey(movie.addedAt);
+                    if (key) {
+                        const current = map.get(key) || [];
+                        current.push({
+                            title: movie.title,
+                            type: 'tv',
+                            episode: movie.currentEpisode || 1
+                        });
+                        map.set(key, current);
+                    }
                 }
             } else {
                 // Movie
                 if (movie.addedAt) {
-                    const key = formatDateKey(new Date(movie.addedAt));
+                    const key = formatLocalDateKey(movie.addedAt);
+                    if (key) {
+                        const current = map.get(key) || [];
+                        current.push({
+                            title: movie.title,
+                            type: 'movie'
+                        });
+                        map.set(key, current);
+                    }
+                }
+            }
+
+            // Also account for rewatchHistory timestamps
+            if (movie.rewatchHistory && movie.rewatchHistory.length > 0) {
+                movie.rewatchHistory.forEach(rh => {
+                    const key = formatLocalDateKey(rh.date);
+                    if (!key) return;
                     const current = map.get(key) || [];
                     current.push({
-                        title: movie.title,
-                        type: 'movie'
+                        title: `${movie.title} (第${rh.iteration}刷)`,
+                        type: movie.mediaType || 'movie'
                     });
                     map.set(key, current);
-                }
+                });
             }
         });
 

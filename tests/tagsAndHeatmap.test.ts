@@ -3,6 +3,7 @@ import { Movie, MovieStatus } from '../types';
 import { convertToCSV } from '../utils/fileUtils';
 import { fuzzyMatch } from '../utils/searchUtils';
 import { extractSmartTags } from '../utils/tagExtractor';
+import { formatLocalDateKey } from '../utils/dateUtils';
 
 describe('Phase 2 - 标签体系与数据转换测试', () => {
     const mockMovies: Movie[] = [
@@ -202,7 +203,7 @@ describe('Phase 2 - 观影热力图数据统计与连续打卡计算', () => {
         const logs = tvWithHistory.watchHistory || [];
         expect(logs).toHaveLength(3);
 
-        const days = new Set(logs.map(l => new Date(l.date).toISOString().split('T')[0]));
+        const days = new Set(logs.map(l => formatLocalDateKey(l.date)));
         expect(days.size).toBe(3);
         expect(days.has('2026-08-24')).toBe(true);
         expect(days.has('2026-08-25')).toBe(true);

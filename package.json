@@ -1,7 +1,7 @@
 {
   "name": "观影记录",
   "private": true,
-  "version": "1.7.5",
+  "version": "1.9.7",
   "type": "module",
   "scripts": {
     "dev": "concurrently \"npm run server\" \"cross-env VITE_API_KEY=hidden vite\"",
@@ -10,10 +10,11 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "deploy": "wrangler pages deploy dist"
+    "deploy": "node scripts/deploy.mjs"
   },
   "dependencies": {
     "@google/genai": "^1.30.0",
+    "@types/jszip": "^3.4.0",
     "cors": "^2.8.6",
     "cross-env": "^10.1.0",
     "dotenv": "^17.3.1",
@@ -21,6 +22,7 @@
     "html2canvas": "^1.4.1",
     "html5-qrcode": "^2.3.8",
     "https-proxy-agent": "^7.0.6",
+    "jszip": "^3.10.1",
     "lucide-react": "^0.554.0",
     "lz-string": "^1.5.0",
     "node-fetch": "^3.3.2",

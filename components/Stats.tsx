@@ -6,7 +6,7 @@ import {
     Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis
 } from 'recharts';
 import { Movie, MovieStatus } from '../types';
-import { Film, Tv, PlayCircle, Calendar, Filter, BarChart3, PieChart as PieChartIcon, Activity, Star, Hexagon, Clock, Zap, Smile, Sparkles, Tag, Clapperboard, Users, User } from 'lucide-react';
+import { Film, Tv, PlayCircle, Calendar, Filter, BarChart3, PieChart as PieChartIcon, Activity, Star, Hexagon, Clock, Zap, Smile, Sparkles, Tag, Clapperboard, Users, User, Trophy } from 'lucide-react';
 import {
     calculateMovieDuration,
     calculateTvDuration,
@@ -16,20 +16,60 @@ import { normalizeTitle } from '../utils/titleNormalizer';
 import { ActivityHeatmap } from './ActivityHeatmap';
 import { ReportShareModal } from './ReportShareModal';
 
-interface StatsProps {
+export type TimeFrame = 'all' | 'year' | 'month';
+
+export interface StatsProps {
     movies: Movie[];
     onToast?: (msg: string, type: 'success' | 'error' | 'info' | 'warning') => void;
     onSelectPerson?: (name: string) => void;
+    onOpenPersonUniverse?: () => void;
+    timeFrame?: TimeFrame;
+    onTimeFrameChange?: (tf: TimeFrame) => void;
+    selectedYear?: string;
+    onSelectedYearChange?: (year: string) => void;
+    selectedMonth?: string;
+    onSelectedMonthChange?: (month: string) => void;
 }
 
-type TimeFrame = 'all' | 'year' | 'month';
-
-export const Stats: React.FC<StatsProps> = ({ movies, onToast, onSelectPerson }) => {
-    const [timeFrame, setTimeFrame] = useState<TimeFrame>('all');
-    const [selectedYear, setSelectedYear] = useState<string>(new Date().getFullYear().toString());
-    const [selectedMonth, setSelectedMonth] = useState<string>(
+export const Stats: React.FC<StatsProps> = ({
+    movies,
+    onToast,
+    onSelectPerson,
+    onOpenPersonUniverse,
+    timeFrame: controlledTimeFrame,
+    onTimeFrameChange,
+    selectedYear: controlledSelectedYear,
+    onSelectedYearChange,
+    selectedMonth: controlledSelectedMonth,
+    onSelectedMonthChange,
+}) => {
+    const [localTimeFrame, setLocalTimeFrame] = useState<TimeFrame>('all');
+    const [localSelectedYear, setLocalSelectedYear] = useState<string>(new Date().getFullYear().toString());
+    const [localSelectedMonth, setLocalSelectedMonth] = useState<string>(
         `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`
     );
+
+    const isControlledTimeFrame = controlledTimeFrame !== undefined;
+    const timeFrame = isControlledTimeFrame ? controlledTimeFrame : localTimeFrame;
+    const setTimeFrame = (tf: TimeFrame) => {
+        if (!isControlledTimeFrame) setLocalTimeFrame(tf);
+        onTimeFrameChange?.(tf);
+    };
+
+    const isControlledYear = controlledSelectedYear !== undefined;
+    const selectedYear = isControlledYear ? controlledSelectedYear : localSelectedYear;
+    const setSelectedYear = (y: string) => {
+        if (!isControlledYear) setLocalSelectedYear(y);
+        onSelectedYearChange?.(y);
+    };
+
+    const isControlledMonth = controlledSelectedMonth !== undefined;
+    const selectedMonth = isControlledMonth ? controlledSelectedMonth : localSelectedMonth;
+    const setSelectedMonth = (m: string) => {
+        if (!isControlledMonth) setLocalSelectedMonth(m);
+        onSelectedMonthChange?.(m);
+    };
+
     const [showReportModal, setShowReportModal] = useState(false);
 
     // 1. Extract available dates for dropdowns (including watchHistory timestamps)
@@ -802,6 +842,17 @@ export const Stats: React.FC<StatsProps> = ({ movies, onToast, onSelectPerson })
                                 <p className="text-[11px] text-slate-400">点击导演名快速在主列表反向检索</p>
                             </div>
                         </div>
+
+                        {onOpenPersonUniverse && (
+                            <button
+                                onClick={onOpenPersonUniverse}
+                                className="flex items-center gap-1 text-xs font-semibold text-amber-400 hover:text-amber-300 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 px-2.5 py-1 rounded-lg transition-all shadow-sm"
+                                title="打开影人脉络宇宙与全收集总排行榜"
+                            >
+                                <Trophy size={13} />
+                                <span>影人全收集榜</span>
+                            </button>
+                        )}
                     </div>
 
                     {directorRankings.length > 0 ? (

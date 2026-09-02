@@ -161,6 +161,26 @@ app.post('/api/gemini/stream', async (req, res) => {
     }
 });
 
+// Proxy endpoint for TMDB API (bypassing GFW and CORS)
+app.get('/api/tmdb/*', async (req, res) => {
+    const tmdbPath = req.params[0] || '';
+    const query = new URLSearchParams(req.query as any).toString();
+    const targetUrl = `https://api.themoviedb.org/3/${tmdbPath}${query ? `?${query}` : ''}`;
+
+    try {
+        const upstreamRes = await nodeFetch(targetUrl, {
+            headers: { 'Accept': 'application/json' },
+            agent: agent,
+        });
+
+        const data = await upstreamRes.json();
+        res.status(upstreamRes.status).json(data);
+    } catch (error: any) {
+        console.error('TMDB Proxy Error:', error.message);
+        res.status(500).json({ error: error.message || 'TMDB 服务请求失败' });
+    }
+});
+
 app.listen(port, () => {
-    console.log(`Gemini Proxy Server running at http://localhost:${port}`);
+    console.log(`Server running at http://localhost:${port}`);
 });

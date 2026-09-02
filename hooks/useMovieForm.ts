@@ -1,5 +1,6 @@
 import { useReducer, useEffect, useCallback } from 'react';
 import { Movie, MovieStatus, MediaType } from '../types';
+import { formatLocalDateKey, getTodayLocalDateString, getOffsetLocalDateString } from '../utils/dateUtils';
 
 export interface MovieFormState {
     title: string;
@@ -25,6 +26,7 @@ export interface MovieFormState {
     cast: string;
     watchIteration: string;
     tags: string[];
+    quote: string;
 }
 
 export const DRAFT_STORAGE_KEY = 'gyjl_movie_form_draft';
@@ -92,6 +94,7 @@ export const defaultState: MovieFormState = {
     cast: '',
     watchIteration: '1',
     tags: [],
+    quote: '',
 };
 
 function formReducer(state: MovieFormState, action: FormAction): MovieFormState {
@@ -108,6 +111,9 @@ function formReducer(state: MovieFormState, action: FormAction): MovieFormState 
                     newState.status = MovieStatus.WATCHED;
                 }
             }
+            if (action.field !== 'watchedDate') {
+                saveFormDraft(newState);
+            }
             return newState;
         }
         case 'SET_MULTIPLE': {
@@ -117,6 +123,7 @@ function formReducer(state: MovieFormState, action: FormAction): MovieFormState 
                     newState.status = MovieStatus.WATCHING;
                 }
             }
+            saveFormDraft(newState);
             return newState;
         }
         case 'RESET':
@@ -126,20 +133,12 @@ function formReducer(state: MovieFormState, action: FormAction): MovieFormState 
     }
 }
 
-export function getTodayString(): string {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
-export function getOffsetDateString(daysOffset: number): string {
-    const d = new Date();
-    d.setDate(d.getDate() + daysOffset);
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
+export const getTodayString = getTodayLocalDateString;
+export const getOffsetDateString = getOffsetLocalDateString;
 
 export function buildInitialState(initialData: Movie | null | undefined): MovieFormState {
     if (!initialData) {
-        return { ...defaultState, watchedDate: getTodayString() };
+        return { ...defaultState, watchedDate: getTodayLocalDateString() };
     }
 
     let playbackSpeed = '1.0';
@@ -154,10 +153,9 @@ export function buildInitialState(initialData: Movie | null | undefined): MovieF
         }
     }
 
-    let watchedDate = getTodayString();
+    let watchedDate = getTodayLocalDateString();
     if (initialData.addedAt) {
-        const d = new Date(initialData.addedAt);
-        watchedDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        watchedDate = formatLocalDateKey(initialData.addedAt);
     }
 
     return {
@@ -184,6 +182,7 @@ export function buildInitialState(initialData: Movie | null | undefined): MovieF
         cast: initialData.cast || '',
         watchIteration: initialData.watchIteration ? initialData.watchIteration.toString() : '1',
         tags: initialData.tags || [],
+        quote: initialData.quote || '',
     };
 }
 

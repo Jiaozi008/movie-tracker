@@ -1,9 +1,78 @@
 import { Movie, MovieStatus, EpisodeWatchLog } from '../types';
+import { formatLocalDateKey, formatRelativeWatchDate } from './dateUtils';
+
+export { formatRelativeWatchDate };
 
 export interface EpisodeUpdateResult {
     updatedMovie: Movie;
     isCompleted: boolean;
     message: string;
+}
+
+export interface DailyWatchHistoryGroup {
+    startEp: number;
+    endEp: number;
+    date: number; // 该组最新打卡时间戳
+    playbackSpeed?: number;
+    count: number;
+    note?: string;
+}
+
+/**
+ * 智能聚合同一天内连续观看的单集打卡记录
+ * 示例：当天连续打卡第1、2、3集 -> 自动聚类为 第1-3集
+ */
+export function clusterWatchHistoryByDay(history?: EpisodeWatchLog[]): DailyWatchHistoryGroup[] {
+    if (!history || history.length === 0) return [];
+
+    const groups: DailyWatchHistoryGroup[] = [];
+    let current: DailyWatchHistoryGroup | null = null;
+    let currentDayKey = '';
+
+    for (const log of history) {
+        const dayKey = formatLocalDateKey(log.date);
+        const speed = log.playbackSpeed || 1.0;
+
+        if (!current) {
+            current = {
+                startEp: log.episode,
+                endEp: log.episode,
+                date: log.date,
+                playbackSpeed: speed,
+                count: 1,
+                note: log.note
+            };
+            currentDayKey = dayKey;
+        } else {
+            const isSameDay = dayKey === currentDayKey;
+            const isConsecutive = log.episode === current.endEp + 1;
+            const isSameSpeed = (log.playbackSpeed || 1.0) === (current.playbackSpeed || 1.0);
+
+            if (isSameDay && isConsecutive && isSameSpeed) {
+                current.endEp = log.episode;
+                current.date = log.date;
+                current.count += 1;
+                if (log.note) current.note = log.note;
+            } else {
+                groups.push(current);
+                current = {
+                    startEp: log.episode,
+                    endEp: log.episode,
+                    date: log.date,
+                    playbackSpeed: speed,
+                    count: 1,
+                    note: log.note
+                };
+                currentDayKey = dayKey;
+            }
+        }
+    }
+
+    if (current) {
+        groups.push(current);
+    }
+
+    return groups;
 }
 
 /**
@@ -98,12 +167,18 @@ export function calculateEpisodeUpdate(
             watchHistory: newHistory
         };
 
+        const todayGroups = clusterWatchHistoryByDay(newHistory);
+        const lastGroup = todayGroups.length > 0 ? todayGroups[todayGroups.length - 1] : null;
+        const rangeText = (lastGroup && lastGroup.startEp < lastGroup.endEp)
+            ? `（今日已打卡第 ${lastGroup.startEp}-${lastGroup.endEp} 集）`
+            : '';
+
         return {
             updatedMovie,
             isCompleted,
             message: isCompleted
                 ? `🎉 恭喜！《${movie.title}》已全剧完结打卡（${nextEp}/${total} 集）`
-                : `《${movie.title}》已打卡至第 ${nextEp} 集`
+                : `《${movie.title}》已打卡至第 ${nextEp} 集 ${rangeText}`.trim()
         };
     } else {
         if (current <= 0) return null;
@@ -139,39 +214,4 @@ export function calculateEpisodeUpdate(
             message: `《${movie.title}》已调整至第 ${prevEp} 集`
         };
     }
-}
-
-/**
- * 格式化最近打卡友好时间（刚刚、X分钟前、今天 12:30、8月26日）
- */
-export function formatRelativeWatchDate(timestamp?: number): string {
-    if (!timestamp) return '';
-    const now = new Date();
-    const date = new Date(timestamp);
-
-    if (isNaN(date.getTime())) return '';
-
-    const diffMs = now.getTime() - date.getTime();
-    const diffMinutes = Math.floor(diffMs / 60000);
-    const diffHours = Math.floor(diffMinutes / 60);
-
-    if (diffMinutes < 1) return '刚刚';
-    if (diffMinutes < 60) return `${diffMinutes} 分钟前`;
-
-    const isToday = date.getFullYear() === now.getFullYear() &&
-        date.getMonth() === now.getMonth() &&
-        date.getDate() === now.getDate();
-
-    const yesterday = new Date(now);
-    yesterday.setDate(now.getDate() - 1);
-    const isYesterday = date.getFullYear() === yesterday.getFullYear() &&
-        date.getMonth() === yesterday.getMonth() &&
-        date.getDate() === yesterday.getDate();
-
-    const timeStr = `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
-
-    if (isToday) return `今天 ${timeStr}`;
-    if (isYesterday) return `昨天 ${timeStr}`;
-
-    return `${date.getMonth() + 1}月${date.getDate()}日`;
 }

@@ -1,6 +1,7 @@
 import { Movie, MovieStatus, EpisodeWatchLog } from '../types';
 import { normalizeTitle } from './titleNormalizer';
 import { calculateMovieActualWatchTime } from './episodeUtils';
+import { formatLocalDateKey } from './dateUtils';
 
 export interface MergeableTvGroup {
     key: string;
@@ -29,10 +30,7 @@ export interface MergeResult {
  * 格式化时间戳为 YYYY-MM-DD
  */
 function formatDate(timestamp?: number): string {
-    if (!timestamp) return '';
-    const d = new Date(timestamp);
-    if (isNaN(d.getTime())) return '';
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    return formatLocalDateKey(timestamp);
 }
 
 /**

@@ -3,20 +3,23 @@ import { Movie, MovieStatus, MediaType } from '../types';
 import { Button } from './ui/Button';
 import { StarRating } from './StarRating';
 import { useMovieForm, saveFormDraft, loadFormDraft, clearFormDraft, getTodayString, getOffsetDateString, MovieFormState } from '../hooks/useMovieForm';
+import { parseLocalDate, formatLocalDateKey } from '../utils/dateUtils';
 import { useMovieAi } from '../hooks/useMovieAi';
 import { resizeImage } from '../utils/imageUtils';
 import { TmdbSearchModal } from './TmdbSearchModal';
 import { TmdbDetailResult, downloadPosterAsBase64 } from '../services/tmdbService';
-import { translateToChinese } from '../services/geminiService';
+import { translateToChinese, generateAiQuote } from '../services/geminiService';
 import { normalizeTitle } from '../utils/titleNormalizer';
 import { getRecommendedIteration as getRecommendedIterationUtil, calculateTvInheritedHabits } from '../utils/statsCalculator';
 import { calculateMovieActualWatchTime } from '../utils/episodeUtils';
 import { parseClipboardMediaText } from '../utils/clipboardParser';
 import { extractSmartTags } from '../utils/tagExtractor';
+import { localizeChineseMovieTitle, translateForeignTitleOnline } from '../utils/movieTitleZhMap';
+import { translatePersonNameOnline, localizePersonNames } from '../utils/personNameZhMap';
 import {
   Wand2, Sparkles, X, Tv, Film, Upload, Image as ImageIcon, Trash2,
   ArrowLeft, Database, Monitor, Users, Tag, ChevronDown, ChevronUp,
-  ClipboardPaste, RotateCcw, Check, Images, FileText, Star
+  ClipboardPaste, RotateCcw, Check, Images, FileText, Star, Quote, Settings2
 } from 'lucide-react';
 
 interface MovieFormProps {
@@ -104,12 +107,17 @@ export const MovieForm: React.FC<MovieFormProps> = ({ initialData, existingMovie
   // 计算进阶信息已填写项数
   const advancedCount = React.useMemo(() => {
     let count = 0;
+    if (state.posterImage) count++;
     if (state.year) count++;
     if (state.country) count++;
+    if (state.genre) count++;
     if (state.director) count++;
     if (state.duration) count++;
     if (state.cast) count++;
     if (state.platform) count++;
+    if (state.tmdbRating) count++;
+    if (state.overview) count++;
+    if (state.tags && state.tags.length > 0) count++;
     return count;
   }, [state]);
 
@@ -155,15 +163,17 @@ export const MovieForm: React.FC<MovieFormProps> = ({ initialData, existingMovie
         return;
       }
 
+      const cleanTitle = localizeChineseMovieTitle(parsed.title);
+
       const updates: Partial<MovieFormState> = {
-        title: parsed.title,
+        title: cleanTitle,
       };
 
       if (parsed.year) updates.year = parsed.year;
       if (parsed.mediaType) updates.mediaType = parsed.mediaType;
 
       const genreTokens = new Set((state.genre || '').split(/[,，/、\s]+/).map(g => g.trim().toLowerCase()).filter(Boolean));
-      const clipTags = extractSmartTags({ title: parsed.title, mediaType: parsed.mediaType })
+      const clipTags = extractSmartTags({ title: cleanTitle, mediaType: parsed.mediaType })
         .filter(t => !genreTokens.has(t.trim().toLowerCase()));
       if (state.tags.length === 0 && clipTags.length > 0) {
         updates.tags = clipTags;
@@ -171,7 +181,7 @@ export const MovieForm: React.FC<MovieFormProps> = ({ initialData, existingMovie
 
       setMultiple(updates);
       setShowSuggestions(true);
-      notify(`已识别「${parsed.title}」${parsed.year ? ` (${parsed.year})` : ''}`, 'success');
+      notify(`已识别「${cleanTitle}」${parsed.year ? ` (${parsed.year})` : ''}`, 'success');
     } catch (err) {
       console.warn('Clipboard read failed:', err);
       notify('无法访问剪贴板，请手动粘贴至标题输入框', 'info');
@@ -252,9 +262,18 @@ export const MovieForm: React.FC<MovieFormProps> = ({ initialData, existingMovie
     return getRecommendedIterationUtil(movieTitle, mediaType, existingMovies, initialData?.id);
   };
 
+  const normalizeGenreString = (g: string): string => {
+    if (!g || !g.trim()) return '';
+    const tokens = g
+      .split(/[,，/、\s]+/)
+      .map(t => t.trim())
+      .filter(Boolean)
+      .map(t => (t.toLowerCase() === 'drama' ? '剧情' : t));
+    return Array.from(new Set(tokens)).join(', ');
+  };
+
   const handleTmdbSelect = async (detail: TmdbDetailResult, posterBase64: string | null) => {
-    const cleanGenre = (g: string) => g ? g.split(/[, ，]\s*/).filter(tag => tag !== '剧情' && tag !== 'Drama').join(', ') : '';
-    const cleanGenreStr = cleanGenre(detail.genre);
+    const cleanGenreStr = normalizeGenreString(detail.genre);
     const genreTokens = new Set(cleanGenreStr.split(/[,，/、\s]+/).map(g => g.trim().toLowerCase()).filter(Boolean));
 
     const autoTags = ((detail.tags && detail.tags.length > 0)
@@ -301,20 +320,37 @@ export const MovieForm: React.FC<MovieFormProps> = ({ initialData, existingMovie
     notify(`已从 TMDB 填充「${detail.title}」的数据，正在翻译详情...`, 'info');
 
     try {
-      const [cnDirector, cnGenre, cnCast, cnCountry] = await Promise.all([
+      // 检查简介是否需要翻译（外语简介且无中文字符）
+      const needsOverviewTranslation = detail.overview && !/[\u4e00-\u9fa5]/.test(detail.overview);
+
+      let [cnDirector, cnGenre, cnCast, cnCountry, cnOverview] = await Promise.all([
         translateToChinese(detail.director, 'name'),
         translateToChinese(detail.genre, 'genre'),
         translateToChinese(detail.cast || '', 'name'),
-        translateToChinese(detail.country || '', 'country')
+        translateToChinese(detail.country || '', 'country'),
+        needsOverviewTranslation ? translateToChinese(detail.overview, 'overview') : Promise.resolve(detail.overview || '')
       ]);
 
-      if (cnDirector !== detail.director || cnGenre !== detail.genre || cnCast !== (detail.cast || '') || cnCountry !== (detail.country || '')) {
-        setMultiple({
-          director: cnDirector,
-          genre: cleanGenre(cnGenre),
-          cast: cnCast,
-          country: cnCountry,
-        });
+      // 若 Gemini 翻译未中文化或未启动，使用本地高速公映译名与在线翻译兜底
+      if (cnDirector && !/[\u4e00-\u9fa5]/.test(cnDirector)) {
+        cnDirector = await translatePersonNameOnline(cnDirector);
+      }
+      if (cnCast && !/[\u4e00-\u9fa5]/.test(cnCast)) {
+        cnCast = await translatePersonNameOnline(cnCast);
+      }
+      if (cnOverview && !/[\u4e00-\u9fa5]/.test(cnOverview)) {
+        cnOverview = await translateForeignTitleOnline(cnOverview);
+      }
+
+      const translatedUpdates: Partial<MovieFormState> = {};
+      if (cnDirector && cnDirector !== detail.director) translatedUpdates.director = cnDirector;
+      if (cnGenre && cnGenre !== detail.genre) translatedUpdates.genre = normalizeGenreString(cnGenre);
+      if (cnCast && cnCast !== (detail.cast || '')) translatedUpdates.cast = cnCast;
+      if (cnCountry && cnCountry !== (detail.country || '')) translatedUpdates.country = cnCountry;
+      if (cnOverview && cnOverview !== detail.overview) translatedUpdates.overview = cnOverview;
+
+      if (Object.keys(translatedUpdates).length > 0) {
+        setMultiple(translatedUpdates);
         notify(`翻译并填充完成`, 'success');
       } else {
         notify(`填充完成`, 'success');
@@ -323,24 +359,44 @@ export const MovieForm: React.FC<MovieFormProps> = ({ initialData, existingMovie
       console.error("Auto-translation failed:", e);
       notify(`填充完成（翻译失败）`, 'info');
     }
+
+    // 若当前经典台词为空，根据该片背景在后台自动生成经典台词/金句
+    if (!state.quote) {
+      generateAiQuote(
+        detail.title,
+        detail.mediaType,
+        detail.year,
+        detail.director,
+        detail.overview
+      ).then((quote) => {
+        if (quote) {
+          setField('quote', quote);
+        }
+      }).catch(err => console.warn('Auto quote generate failed:', err));
+    }
   };
 
   // AI integration via custom hook
-  const { isAiLoading, isReviewLoading, handleAiFill, handleAiReview } = useMovieAi({
+  const { isAiLoading, isReviewLoading, isQuoteLoading, handleAiFill, handleAiReview, handleAiQuote } = useMovieAi({
     existingMovies,
     initialData,
     status: state.status,
     mediaType: state.mediaType,
     rating: state.rating,
     title: state.title,
+    year: state.year,
+    director: state.director,
+    overview: state.overview,
     onMetadataFetched: (data) => {
-      const cleanedGenre = data.genre ? data.genre.split(/[,，]\s*/).filter(tag => tag !== '剧情' && tag !== 'Drama').join(', ') : '';
+      const cleanedTitle = localizeChineseMovieTitle(data.title);
+      const cleanedDirector = localizePersonNames(data.director || '');
+      const cleanedGenre = normalizeGenreString(data.genre);
       const genreTokens = new Set(cleanedGenre.split(/[,，/、\s]+/).map(g => g.trim().toLowerCase()).filter(Boolean));
 
       const autoAiTags = ((data.tags && data.tags.length > 0)
         ? data.tags
         : extractSmartTags({
-            title: data.title,
+            title: cleanedTitle,
             genre: cleanedGenre,
             overview: data.overview || '',
             country: data.country || '',
@@ -353,22 +409,24 @@ export const MovieForm: React.FC<MovieFormProps> = ({ initialData, existingMovie
         : Array.from(new Set([...filteredExistingTags, ...autoAiTags])).slice(0, 5);
 
       setMultiple({
-        title: data.title,
+        title: cleanedTitle,
         year: data.year,
         country: data.country,
         genre: cleanedGenre,
-        director: data.director,
+        director: cleanedDirector,
         posterColor: data.posterColor,
         mediaType: data.mediaType,
         overview: data.overview || '',
         tags: finalTags,
+        ...(data.quote && !state.quote ? { quote: data.quote } : {}),
         ...(data.duration ? { duration: data.duration.toString() } : {}),
         ...(data.totalEpisodes ? { totalEpisodes: data.totalEpisodes.toString() } : {}),
-        watchIteration: getRecommendedIteration(data.title, (data.mediaType || 'movie') as MediaType),
-        ...getInheritedHabits(data.title, data.mediaType || 'movie'),
+        watchIteration: getRecommendedIteration(cleanedTitle, (data.mediaType || 'movie') as MediaType),
+        ...getInheritedHabits(cleanedTitle, data.mediaType || 'movie'),
       });
     },
     onReviewGenerated: (review) => setField('review', review),
+    onQuoteGenerated: (quote) => setField('quote', quote),
     onError: (msg) => notify(msg, 'error'),
   });
 
@@ -444,8 +502,12 @@ export const MovieForm: React.FC<MovieFormProps> = ({ initialData, existingMovie
       }
 
       const watchedDateStr = state.watchedDate || getTodayString();
-      const parsedDate = new Date(watchedDateStr).getTime();
-      const addedAtTimestamp = isNaN(parsedDate) ? Date.now() : parsedDate;
+      let addedAtTimestamp: number;
+      if (initialData?.addedAt && formatLocalDateKey(initialData.addedAt) === watchedDateStr) {
+        addedAtTimestamp = initialData.addedAt;
+      } else {
+        addedAtTimestamp = parseLocalDate(watchedDateStr);
+      }
 
       let updatedWatchHistory = initialData?.watchHistory ? [...initialData.watchHistory] : undefined;
       const parsedCurrentEp = state.mediaType === 'tv' ? (parseInt(state.currentEpisode) || 0) : 0;
@@ -548,6 +610,7 @@ export const MovieForm: React.FC<MovieFormProps> = ({ initialData, existingMovie
         watchHistory: updatedWatchHistory,
         rewatchHistory: updatedRewatchHistory,
         tags: state.tags.length > 0 ? state.tags : undefined,
+        quote: state.quote?.trim() || undefined,
       });
     } catch (err: any) {
       console.error('Error submitting movie form:', err);
@@ -632,39 +695,71 @@ export const MovieForm: React.FC<MovieFormProps> = ({ initialData, existingMovie
         )}
 
         {/* Scrollable Content */}
-        <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-5 custom-scrollbar no-scrollbar bg-slate-900/50">
-          {/* Media Type Toggle */}
+        <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 custom-scrollbar no-scrollbar bg-slate-900/50">
+          {/* Hidden File Input for Image Upload */}
+          <input
+            type="file"
+            ref={fileInputRef}
+            onChange={handleImageUpload}
+            accept="image/*"
+            className="hidden"
+          />
+
+          {/* 1. Media Type Toggle */}
           <div className="flex bg-slate-800 p-1 rounded-lg">
             <button
               type="button"
               onClick={() => setField('mediaType', 'movie')}
-              className={`flex-1 py-2.5 sm:py-2 px-4 rounded-md text-sm font-medium flex items-center justify-center gap-2 transition-all ${state.mediaType === 'movie' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:text-slate-200'}`}
+              className={`flex-1 py-2 sm:py-1.5 px-4 rounded-md text-sm font-medium flex items-center justify-center gap-2 transition-all ${state.mediaType === 'movie' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:text-slate-200'}`}
             >
               <Film size={16} /> 电影
             </button>
             <button
               type="button"
               onClick={() => setField('mediaType', 'tv')}
-              className={`flex-1 py-2.5 sm:py-2 px-4 rounded-md text-sm font-medium flex items-center justify-center gap-2 transition-all ${state.mediaType === 'tv' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:text-slate-200'}`}
+              className={`flex-1 py-2 sm:py-1.5 px-4 rounded-md text-sm font-medium flex items-center justify-center gap-2 transition-all ${state.mediaType === 'tv' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:text-slate-200'}`}
             >
               <Tv size={16} /> 电视剧
             </button>
           </div>
 
-          {/* Title Input with Smart Clipboard, TMDB & AI */}
-          <div className="space-y-2">
+          {/* 2. Title Section (with compact Mini-Poster Thumbnail & Smart Ingestion) */}
+          <div className="space-y-1.5">
             <div className="flex justify-between items-center">
-              <label className="text-sm font-medium text-slate-300">标题</label>
+              <label className="text-sm font-medium text-slate-300 flex items-center gap-2">
+                <span>影视标题</span>
+                {state.year && <span className="text-xs text-slate-500 font-normal">({state.year})</span>}
+                {state.genre && <span className="text-xs text-indigo-400/80 font-normal truncate max-w-[120px]">· {state.genre}</span>}
+              </label>
               <button
                 type="button"
                 onClick={handleSmartClipboardPaste}
-                className="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1 transition-colors touch-manipulation"
+                className="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1 transition-colors touch-manipulation font-medium bg-indigo-950/60 hover:bg-indigo-900/80 px-2 py-0.5 rounded border border-indigo-500/30"
                 title="一键读取剪贴板文本或豆瓣链接"
               >
-                <ClipboardPaste size={13} /> 剪贴板识别
+                <ClipboardPaste size={12} /> 剪贴板识别
               </button>
             </div>
-            <div className="flex gap-2">
+
+            <div className="flex gap-2.5 items-center">
+              {/* Compact Mini Poster Thumbnail (Click to quick upload/change) */}
+              <div
+                className="w-10 h-13 sm:w-11 sm:h-14 bg-slate-800 rounded-lg border border-slate-700 flex items-center justify-center overflow-hidden shrink-0 relative group cursor-pointer shadow-sm hover:border-indigo-500 transition-all"
+                onClick={() => fileInputRef.current?.click()}
+                style={{ background: state.posterImage ? 'transparent' : state.posterColor }}
+                title="点击快速更换封面海报"
+              >
+                {state.posterImage ? (
+                  <img src={state.posterImage} alt="Cover" className="w-full h-full object-cover" />
+                ) : (
+                  <ImageIcon className="text-white/40" size={18} />
+                )}
+                <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+                  <Upload size={14} className="text-white" />
+                </div>
+              </div>
+
+              {/* Title Input + Suggestions + TMDB/AI buttons */}
               <div className="relative flex-1">
                 <input
                   type="text"
@@ -691,8 +786,8 @@ export const MovieForm: React.FC<MovieFormProps> = ({ initialData, existingMovie
                     setShowSuggestions(false);
                   }}
                   autoComplete="off"
-                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-2.5 sm:py-2 text-base sm:text-sm text-white focus:ring-2 focus:ring-indigo-500 outline-none relative z-10"
-                  placeholder={state.mediaType === 'movie' ? "例如：盗梦空间" : "例如：三体"}
+                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3.5 py-2.5 text-base sm:text-sm text-white focus:ring-2 focus:ring-indigo-500 outline-none relative z-10"
+                  placeholder={state.mediaType === 'movie' ? "输入片名 (例如: 星际穿越)" : "输入剧名 (例如: 狂飙)"}
                   required
                 />
 
@@ -728,16 +823,20 @@ export const MovieForm: React.FC<MovieFormProps> = ({ initialData, existingMovie
                   </div>
                 )}
               </div>
+
+              {/* TMDB Button */}
               <Button
                 type="button"
                 variant="secondary"
                 onClick={() => setShowTmdbSearch(true)}
                 disabled={!state.title}
-                title="从 TMDB 搜索（精准数据 + 海报）"
+                title="从 TMDB 搜索（精准元数据 + 海报）"
                 className="px-3"
               >
                 <Database size={18} />
               </Button>
+
+              {/* AI Fill Button */}
               <Button
                 type="button"
                 variant="secondary"
@@ -751,132 +850,146 @@ export const MovieForm: React.FC<MovieFormProps> = ({ initialData, existingMovie
             </div>
           </div>
 
-          {/* Poster Image Upload & Multi-poster Gallery */}
-          <div className="space-y-2">
-            <div className="flex justify-between items-center">
-              <label className="text-sm font-medium text-slate-300">海报图片</label>
-              <span className="text-xs text-slate-500">支持 Ctrl+V 截图直接粘贴</span>
-            </div>
-            <div className="flex items-center gap-4">
-              <div
-                className="w-20 h-28 sm:w-16 sm:h-24 bg-slate-800 rounded-lg border border-slate-700 flex items-center justify-center overflow-hidden shrink-0 relative group cursor-pointer"
-                onClick={() => fileInputRef.current?.click()}
-                style={{ background: state.posterImage ? 'transparent' : state.posterColor }}
-                title="点击上传图片，或直接截图按 Ctrl+V 粘贴"
-              >
-                {state.posterImage ? (
-                  <img src={state.posterImage} alt="Cover" className="w-full h-full object-cover" />
-                ) : (
-                  <ImageIcon className="text-white/50" size={24} />
-                )}
-                <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
-                  <Upload size={16} className="text-white" />
-                </div>
-              </div>
-
-              <div className="flex-1">
-                <input
-                  type="file"
-                  ref={fileInputRef}
-                  onChange={handleImageUpload}
-                  accept="image/*"
-                  className="hidden"
-                />
-                <div className="flex gap-2 flex-wrap">
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => fileInputRef.current?.click()}
-                    className="py-1.5"
-                  >
-                    上传封面
-                  </Button>
-                  {state.posterImage && (
-                    <Button
-                      type="button"
-                      variant="danger"
-                      size="sm"
-                      onClick={() => setField('posterImage', '')}
-                      className="py-1.5"
-                    >
-                      <Trash2 size={16} />
-                    </Button>
-                  )}
-                </div>
-                <p className="text-xs text-slate-500 mt-2">支持 JPG, PNG, WebP。自动压缩优化存储。</p>
-              </div>
-            </div>
-
-            {/* TMDB Multi-Poster Gallery Selector */}
-            {posterGallery.length > 1 && (
-              <div className="pt-2 border-t border-slate-700/40">
-                <div className="text-xs text-slate-400 mb-2 flex items-center gap-1.5">
-                  <Images size={13} className="text-indigo-400" />
-                  <span>TMDB 备选海报库 (点击一键换封面)：</span>
-                </div>
-                <div className="flex gap-2.5 overflow-x-auto pb-1.5 custom-scrollbar">
-                  {posterGallery.map((url, idx) => (
-                    <button
-                      key={idx}
-                      type="button"
-                      disabled={isPosterDownloading}
-                      onClick={async () => {
-                        try {
-                          setIsPosterDownloading(true);
-                          notify('正在下载并设置备选海报...', 'info');
-                          const b64 = await downloadPosterAsBase64(url);
-                          setField('posterImage', b64);
-                          notify('已切换为备选海报', 'success');
-                        } catch {
-                          setField('posterImage', url);
-                        } finally {
-                          setIsPosterDownloading(false);
-                        }
-                      }}
-                      className="w-12 h-16 rounded-md overflow-hidden bg-slate-800 border border-slate-700 hover:border-indigo-500 hover:scale-105 transition-all shrink-0 active:scale-95 shadow-sm"
-                      title={`备选海报 ${idx + 1}`}
-                    >
-                      <img src={url} alt={`Poster ${idx + 1}`} className="w-full h-full object-cover" loading="lazy" />
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* TV Specific Fields: Episodes */}
-          {state.mediaType === 'tv' && (
-            <div className="grid grid-cols-2 gap-4 bg-slate-800/50 p-3 rounded-lg border border-slate-700/50">
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-slate-300">已看集数</label>
+          {/* TV Specific Fields: Episodes & Status / Iteration */}
+          {state.mediaType === 'tv' ? (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 bg-slate-800/40 p-3 rounded-xl border border-slate-700/40">
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-slate-400">已看集数</label>
                 <input
                   type="number"
                   min="0"
                   value={state.currentEpisode}
                   onChange={(e) => setField('currentEpisode', e.target.value)}
-                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-2.5 sm:py-2 text-white focus:ring-2 focus:ring-indigo-500 outline-none text-base sm:text-sm"
+                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
                   placeholder="0"
                 />
               </div>
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-slate-300">总集数</label>
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-slate-400">总集数</label>
                 <input
                   type="number"
                   min="0"
                   value={state.totalEpisodes}
                   onChange={(e) => setField('totalEpisodes', e.target.value)}
-                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-2.5 sm:py-2 text-white focus:ring-2 focus:ring-indigo-500 outline-none text-base sm:text-sm"
+                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
                   placeholder="例如: 24"
                 />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-slate-400">观看状态</label>
+                <select
+                  value={state.status}
+                  onChange={(e) => setField('status', e.target.value as MovieStatus)}
+                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-white focus:ring-2 focus:ring-indigo-500 outline-none appearance-none text-sm"
+                >
+                  {Object.values(MovieStatus).map(s => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-slate-400">观影轮次</label>
+                <div className="flex items-center bg-slate-800 border border-slate-700 rounded-lg h-[34px] overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const cur = parseInt(state.watchIteration) || 1;
+                      if (cur > 1) setField('watchIteration', (cur - 1).toString());
+                    }}
+                    className="px-2 h-full text-slate-400 hover:text-white hover:bg-slate-700 transition-colors"
+                  >
+                    -
+                  </button>
+                  <input
+                    type="number"
+                    min="1"
+                    value={state.watchIteration}
+                    onChange={(e) => setField('watchIteration', e.target.value)}
+                    className="w-full bg-transparent border-0 text-center text-white focus:ring-0 outline-none text-xs [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const cur = parseInt(state.watchIteration) || 1;
+                      setField('watchIteration', (cur + 1).toString());
+                    }}
+                    className="px-2 h-full text-slate-400 hover:text-white hover:bg-slate-700 transition-colors"
+                  >
+                    +
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-3 bg-slate-800/40 p-2.5 rounded-xl border border-slate-700/40">
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-slate-400">观看状态</label>
+                <select
+                  value={state.status}
+                  onChange={(e) => setField('status', e.target.value as MovieStatus)}
+                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white focus:ring-2 focus:ring-indigo-500 outline-none appearance-none text-sm"
+                >
+                  {Object.values(MovieStatus).map(s => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-slate-400">观影轮次 (重温)</label>
+                <div className="flex items-center bg-slate-800 border border-slate-700 rounded-lg h-[34px] overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const cur = parseInt(state.watchIteration) || 1;
+                      if (cur > 1) setField('watchIteration', (cur - 1).toString());
+                    }}
+                    className="px-2.5 h-full text-slate-400 hover:text-white hover:bg-slate-700 transition-colors"
+                  >
+                    -
+                  </button>
+                  <input
+                    type="number"
+                    min="1"
+                    value={state.watchIteration}
+                    onChange={(e) => setField('watchIteration', e.target.value)}
+                    className="w-full bg-transparent border-0 text-center text-white focus:ring-0 outline-none text-xs [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const cur = parseInt(state.watchIteration) || 1;
+                      setField('watchIteration', (cur + 1).toString());
+                    }}
+                    className="px-2.5 h-full text-slate-400 hover:text-white hover:bg-slate-700 transition-colors"
+                  >
+                    +
+                  </button>
+                </div>
               </div>
             </div>
           )}
 
-          {/* Watched Date with Quick Selection Capsules */}
-          <div className="space-y-2 bg-slate-800/40 p-3.5 rounded-xl border border-slate-700/40">
+          {/* 3. My Rating (我的评分) */}
+          <div className="bg-slate-800/40 p-3 rounded-xl border border-slate-700/40 space-y-1.5">
+            <div className="flex items-center justify-between">
+              <label className="text-sm font-medium text-slate-300">我的评分</label>
+              {ratingInfo ? (
+                <span className={`text-xs px-2.5 py-0.5 rounded border font-semibold ${ratingInfo.color}`}>
+                  {ratingInfo.score} 分 · {ratingInfo.label}
+                </span>
+              ) : (
+                <span className="text-xs text-slate-500">点击星星评分</span>
+              )}
+            </div>
+            <div className="flex justify-center sm:justify-start pt-0.5">
+              <StarRating rating={state.rating} onRatingChange={(r) => setField('rating', r)} size={28} />
+            </div>
+          </div>
+
+          {/* 4. Watch Date (观影时间) */}
+          <div className="space-y-1.5 bg-slate-800/40 p-3 rounded-xl border border-slate-700/40">
             <div className="flex justify-between items-center">
-              <label className="text-sm font-medium text-slate-300">观影打卡日期</label>
+              <label className="text-sm font-medium text-slate-300">观影打卡时间</label>
               <div className="flex gap-1.5">
                 {[
                   { label: '今天', val: todayStr },
@@ -887,7 +1000,7 @@ export const MovieForm: React.FC<MovieFormProps> = ({ initialData, existingMovie
                     key={item.label}
                     type="button"
                     onClick={() => setField('watchedDate', item.val)}
-                    className={`text-xs px-2.5 py-1 rounded-md transition-all touch-manipulation border ${state.watchedDate === item.val
+                    className={`text-xs px-2.5 py-0.5 rounded-md transition-all touch-manipulation border ${state.watchedDate === item.val
                       ? 'bg-indigo-600 border-indigo-500 text-white font-medium shadow-sm'
                       : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-slate-200 hover:border-slate-600'
                       }`}
@@ -901,118 +1014,16 @@ export const MovieForm: React.FC<MovieFormProps> = ({ initialData, existingMovie
               type="date"
               value={state.watchedDate}
               onChange={(e) => setField('watchedDate', e.target.value)}
-              className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-2.5 sm:py-2 text-white focus:ring-2 focus:ring-indigo-500 outline-none placeholder-slate-500 text-base sm:text-sm"
+              className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3.5 py-1.5 text-white focus:ring-2 focus:ring-indigo-500 outline-none placeholder-slate-500 text-base sm:text-sm"
               required
             />
           </div>
 
-          {/* Status, Iteration, Rating & TMDB Score */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {/* Status */}
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-300">观看状态</label>
-              <select
-                value={state.status}
-                onChange={(e) => setField('status', e.target.value as MovieStatus)}
-                className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-2.5 sm:py-2 text-white focus:ring-2 focus:ring-indigo-500 outline-none appearance-none text-base sm:text-sm"
-              >
-                {Object.values(MovieStatus).map(s => (
-                  <option key={s} value={s}>{s}</option>
-                ))}
-              </select>
-            </div>
-
-            {/* Watch Iteration */}
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-300">观影轮次 (重温)</label>
-              <div className="flex items-center bg-slate-800 border border-slate-700 rounded-lg h-[44px] sm:h-[38px] overflow-hidden">
-                <button
-                  type="button"
-                  onClick={() => {
-                    const cur = parseInt(state.watchIteration) || 1;
-                    if (cur > 1) setField('watchIteration', (cur - 1).toString());
-                  }}
-                  className="px-3 h-full text-slate-400 hover:text-white hover:bg-slate-700 active:bg-slate-600 transition-colors"
-                >
-                  -
-                </button>
-                <input
-                  type="number"
-                  min="1"
-                  value={state.watchIteration}
-                  onChange={(e) => setField('watchIteration', e.target.value)}
-                  onBlur={() => {
-                    const cur = parseInt(state.watchIteration) || 1;
-                    setField('watchIteration', Math.max(1, cur).toString());
-                  }}
-                  className="w-full bg-transparent border-0 text-center text-white focus:ring-0 outline-none text-base sm:text-sm [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                />
-                <button
-                  type="button"
-                  onClick={() => {
-                    const cur = parseInt(state.watchIteration) || 1;
-                    setField('watchIteration', (cur + 1).toString());
-                  }}
-                  className="px-3 h-full text-slate-400 hover:text-white hover:bg-slate-700 active:bg-slate-600 transition-colors"
-                >
-                  +
-                </button>
-              </div>
-            </div>
-
-            {/* My Rating */}
-            <div className="space-y-2 flex flex-col justify-end py-1 sm:py-0">
-              <div className="flex items-center justify-between mb-1">
-                <label className="text-sm font-medium text-slate-300">我的评分</label>
-                {ratingInfo && (
-                  <span className={`text-xs px-2 py-0.5 rounded border font-semibold ${ratingInfo.color}`}>
-                    {ratingInfo.score}分 · {ratingInfo.label}
-                  </span>
-                )}
-              </div>
-              <div className="flex justify-center sm:justify-start">
-                <StarRating rating={state.rating} onRatingChange={(r) => setField('rating', r)} size={28} />
-              </div>
-            </div>
-
-            {/* TMDB Platform Rating */}
-            <div className="space-y-2 flex flex-col justify-end py-1 sm:py-0">
-              <div className="flex items-center justify-between mb-1">
-                <label className="text-sm font-medium text-slate-300 flex items-center gap-1.5">
-                  <Star size={13} className="text-amber-400 fill-amber-400" />
-                  TMDB 平台评分
-                </label>
-                {state.tmdbRating && Number(state.tmdbRating) > 0 ? (
-                  <span className="text-xs px-2 py-0.5 rounded font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                    ★ {Number(state.tmdbRating).toFixed(1)} 分
-                  </span>
-                ) : (
-                  <span className="text-[11px] text-slate-500">TMDB 自动获取</span>
-                )}
-              </div>
-              <div className="relative">
-                <input
-                  type="number"
-                  step="0.1"
-                  min="0"
-                  max="10"
-                  value={state.tmdbRating !== undefined && state.tmdbRating !== null ? state.tmdbRating : ''}
-                  onChange={(e) => {
-                    const val = e.target.value !== '' ? parseFloat(e.target.value) : undefined;
-                    setField('tmdbRating', val);
-                  }}
-                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2.5 sm:py-2 text-white focus:ring-2 focus:ring-indigo-500 outline-none text-base sm:text-sm"
-                  placeholder="从 TMDB 自动获取 (例如: 8.5)"
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* Playback Speed Section (Above Custom Tags) */}
-          <div className="space-y-2 bg-slate-800/30 p-3.5 rounded-xl border border-slate-700/50">
+          {/* 5. Playback Speed (观看倍速) */}
+          <div className="space-y-1.5 bg-slate-800/40 p-3 rounded-xl border border-slate-700/40">
             <div className="flex justify-between items-center">
               <label className="text-sm font-medium text-slate-300 flex items-center gap-1.5">
-                <span className="text-amber-400">⚡</span> 倍速播放折算
+                <span className="text-amber-400">⚡</span> 观看倍速
               </label>
               {state.playbackSpeed !== '1.0' && (
                 <span className="text-xs px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-medium">
@@ -1066,144 +1077,75 @@ export const MovieForm: React.FC<MovieFormProps> = ({ initialData, existingMovie
                 <span className="text-slate-400 text-xs">x (支持 0.5x ~ 3.0x)</span>
               </div>
             )}
-            <p className="text-[11px] text-slate-500">
-              {state.mediaType === 'tv'
-                ? '按 已看集数 × 单集时长 ÷ 倍速 自动折算实际耗时'
-                : '按 影视总时长 ÷ 倍速 自动折算实际耗时'}
-            </p>
           </div>
 
-          {/* Custom Tags Section */}
-          <div className="space-y-3 bg-slate-800/30 p-4 rounded-xl border border-slate-700/50">
-            <div className="flex justify-between items-center">
-              <label className="text-sm font-medium text-slate-300 flex items-center gap-2">
-                <Tag size={16} className="text-indigo-400" /> 自定义标签 (Tags)
-              </label>
-              <div className="flex items-center gap-3">
+          {/* 6. Quote & Review (金句短评与笔记) */}
+          <div className="space-y-3.5">
+            {/* Classic Quote */}
+            <div className="space-y-1.5">
+              <div className="flex justify-between items-center">
+                <label className="text-sm font-medium text-slate-300 flex items-center gap-1.5">
+                  <Quote size={14} className="text-amber-400" />
+                  经典台词 / 灵光一现短评
+                </label>
                 <button
                   type="button"
-                  onClick={() => {
-                    const genreTokens = new Set(
-                      (state.genre || '')
-                        .split(/[,，/、\s]+/)
-                        .map(g => g.trim().toLowerCase())
-                        .filter(Boolean)
-                    );
-                    const smart = extractSmartTags({
-                      title: state.title,
-                      genre: state.genre,
-                      overview: state.overview,
-                      country: state.country,
-                      voteAverage: state.tmdbRating,
-                      mediaType: state.mediaType
-                    }).filter(t => !genreTokens.has(t.trim().toLowerCase()));
-
-                    const existingFiltered = state.tags.filter(t => !genreTokens.has(t.trim().toLowerCase()));
-                    const merged = Array.from(new Set([...existingFiltered, ...smart])).slice(0, 5);
-
-                    if (smart.length > 0 || merged.length !== state.tags.length) {
-                      setField('tags', merged);
-                      notify(`已智能生成 ${smart.length} 个特征标签（已自动剔除与类型重复项）`, 'success');
-                    } else {
-                      notify('未能提取出新标签，或均已包含在类型中', 'warning');
-                    }
-                  }}
-                  className="text-indigo-400 hover:text-indigo-300 text-xs flex items-center gap-1 hover:underline p-0.5 touch-manipulation"
-                  title="根据片名、类型与剧情简介智能提取标签（自动过滤类型相同项）"
+                  onClick={handleAiQuote}
+                  className="text-amber-400 text-xs flex items-center gap-1 hover:text-amber-300 transition-colors px-2 py-0.5 rounded hover:bg-slate-800 touch-manipulation disabled:opacity-50 disabled:cursor-not-allowed border border-amber-500/20 bg-amber-500/10"
+                  disabled={isQuoteLoading || !state.title}
+                  title="根据当前影片智能生成最具代表性的经典台词或金句"
                 >
-                  <Sparkles size={12} />
-                  智能打标签
+                  {isQuoteLoading ? <Sparkles size={13} className="animate-pulse" /> : <Sparkles size={13} />}
+                  AI 经典金句
                 </button>
-                <span className="text-xs text-slate-500 hidden sm:inline">按回车添加</span>
               </div>
-            </div>
-
-            {state.tags.length > 0 && (
-              <div className="flex flex-wrap gap-1.5 mb-2">
-                {state.tags.map(t => (
-                  <span
-                    key={t}
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold bg-indigo-600/30 text-indigo-300 border border-indigo-500/40 shadow-sm"
-                  >
-                    #{t}
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveTag(t)}
-                      className="hover:text-white text-indigo-400 transition-colors"
-                      title="移除标签"
-                    >
-                      <X size={12} />
-                    </button>
-                  </span>
-                ))}
-              </div>
-            )}
-
-            <div className="flex gap-2">
               <input
                 type="text"
-                value={tagInput}
-                onChange={(e) => setTagInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ',') {
-                    e.preventDefault();
-                    handleAddTag(tagInput);
-                  }
-                }}
-                onBlur={() => {
-                  if (tagInput.trim()) handleAddTag(tagInput);
-                }}
-                className="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-4 py-2.5 sm:py-2 text-white focus:ring-2 focus:ring-indigo-500 outline-none text-base sm:text-sm"
-                placeholder="输入标签名（例如：高分烧脑、治愈、赛博朋克...）"
+                value={state.quote}
+                onChange={(e) => setField('quote', e.target.value)}
+                className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3.5 py-2 text-amber-100 placeholder:text-slate-500 focus:ring-2 focus:ring-amber-500 outline-none text-base sm:text-sm italic"
+                placeholder="例如：“愿原力与你同在”、“生活就像一盒巧克力...”"
               />
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                onClick={() => handleAddTag(tagInput)}
-                disabled={!tagInput.trim()}
-                className="px-3"
-              >
-                添加
-              </Button>
             </div>
 
-            {existingTagPool.length > 0 && (
-              <div className="pt-2 border-t border-slate-700/40">
-                <span className="text-xs text-slate-500 mr-2">常用标签：</span>
-                <div className="inline-flex flex-wrap gap-1.5 mt-1">
-                  {existingTagPool.slice(0, 12).map(t => (
-                    <button
-                      key={t}
-                      type="button"
-                      onClick={() => handleAddTag(t)}
-                      disabled={state.tags.includes(t)}
-                      className={`text-xs px-2.5 py-1 sm:py-0.5 rounded transition-all border touch-manipulation active:scale-95 ${state.tags.includes(t)
-                        ? 'bg-slate-800 border-slate-700 text-slate-500 opacity-40 cursor-default'
-                        : 'bg-slate-800/80 border-slate-700 text-slate-300 hover:border-indigo-500 hover:text-indigo-300 hover:bg-slate-800 active:bg-slate-700'}`}
-                    >
-                      +{t}
-                    </button>
-                  ))}
-                </div>
+            {/* Review / Note */}
+            <div className="space-y-1.5">
+              <div className="flex justify-between items-center">
+                <label className="text-sm font-medium text-slate-300">评价 / 随手笔记</label>
+                <button
+                  type="button"
+                  onClick={handleAiReview}
+                  className="text-indigo-400 text-xs flex items-center gap-1 hover:text-indigo-300 transition-colors px-2 py-0.5 rounded hover:bg-slate-800 touch-manipulation border border-indigo-500/20 bg-indigo-500/10"
+                  disabled={isReviewLoading || !state.title}
+                >
+                  {isReviewLoading ? <Sparkles size={13} className="animate-pulse" /> : <Sparkles size={13} />}
+                  AI 帮我写
+                </button>
               </div>
-            )}
+              <textarea
+                value={state.review}
+                onChange={(e) => setField('review', e.target.value)}
+                className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3.5 py-2 text-white focus:ring-2 focus:ring-indigo-500 outline-none h-20 sm:h-24 resize-none text-base sm:text-sm placeholder:text-slate-500"
+                placeholder="你觉得这部作品怎么样？记录下当下的感受..."
+              />
+            </div>
           </div>
 
-          {/* Collapsible Advanced Information Section */}
+          {/* 7. Collapsible Advanced Section (折叠全部后台静默自动填充元数据) */}
           <div className="border border-slate-700/60 rounded-xl overflow-hidden bg-slate-800/20">
             <button
               type="button"
               onClick={() => setShowAdvanced(!showAdvanced)}
-              className="w-full px-4 py-3 bg-slate-800/40 hover:bg-slate-800/70 transition-colors flex items-center justify-between text-left touch-manipulation"
+              className="w-full px-4 py-2.5 bg-slate-800/40 hover:bg-slate-800/70 transition-colors flex items-center justify-between text-left touch-manipulation"
             >
               <div className="flex items-center gap-2">
+                <Settings2 size={16} className="text-slate-400" />
                 <span className="text-sm font-medium text-slate-300">
-                  {showAdvanced ? '收起更多详细信息' : '展开更多详细信息 (年份 / 地区 / 导演 / 时长 / 主演 / 平台)'}
+                  {showAdvanced ? '收起后台详细元数据' : '展开查看 / 微调后台元数据'}
                 </span>
                 {advancedCount > 0 && (
                   <span className="text-[11px] px-2 py-0.5 bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 rounded-full font-medium">
-                    已填 {advancedCount} 项
+                    已自动补全 {advancedCount} 项
                   </span>
                 )}
               </div>
@@ -1212,58 +1154,140 @@ export const MovieForm: React.FC<MovieFormProps> = ({ initialData, existingMovie
 
             {showAdvanced && (
               <div className="p-4 space-y-4 border-t border-slate-700/60 bg-slate-900/40">
+                {/* Poster Management & Multi-Poster Gallery in Advanced */}
+                <div className="space-y-2">
+                  <div className="flex justify-between items-center">
+                    <label className="text-xs font-medium text-slate-400">海报封面管理</label>
+                    <span className="text-[11px] text-slate-500">支持截图直接 Ctrl+V 粘贴</span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <div
+                      className="w-14 h-20 bg-slate-800 rounded-lg border border-slate-700 flex items-center justify-center overflow-hidden shrink-0 relative group cursor-pointer"
+                      onClick={() => fileInputRef.current?.click()}
+                      style={{ background: state.posterImage ? 'transparent' : state.posterColor }}
+                    >
+                      {state.posterImage ? (
+                        <img src={state.posterImage} alt="Cover" className="w-full h-full object-cover" />
+                      ) : (
+                        <ImageIcon className="text-white/40" size={20} />
+                      )}
+                      <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+                        <Upload size={14} className="text-white" />
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => fileInputRef.current?.click()}
+                        className="py-1 text-xs"
+                      >
+                        上传图片
+                      </Button>
+                      {state.posterImage && (
+                        <Button
+                          type="button"
+                          variant="danger"
+                          size="sm"
+                          onClick={() => setField('posterImage', '')}
+                          className="py-1 text-xs"
+                        >
+                          <Trash2 size={14} />
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Multi-Poster Gallery */}
+                  {posterGallery.length > 1 && (
+                    <div className="pt-2 border-t border-slate-700/40">
+                      <div className="text-xs text-slate-400 mb-2 flex items-center gap-1.5">
+                        <Images size={13} className="text-indigo-400" />
+                        <span>TMDB 备选海报库 (点击一键换封面)：</span>
+                      </div>
+                      <div className="flex gap-2 overflow-x-auto pb-1 custom-scrollbar">
+                        {posterGallery.map((url, idx) => (
+                          <button
+                            key={idx}
+                            type="button"
+                            disabled={isPosterDownloading}
+                            onClick={async () => {
+                              try {
+                                setIsPosterDownloading(true);
+                                notify('正在下载并设置备选海报...', 'info');
+                                const b64 = await downloadPosterAsBase64(url);
+                                setField('posterImage', b64);
+                                notify('已切换为备选海报', 'success');
+                              } catch {
+                                setField('posterImage', url);
+                              } finally {
+                                setIsPosterDownloading(false);
+                              }
+                            }}
+                            className="w-10 h-14 rounded-md overflow-hidden bg-slate-800 border border-slate-700 hover:border-indigo-500 hover:scale-105 transition-all shrink-0 active:scale-95 shadow-sm"
+                            title={`备选海报 ${idx + 1}`}
+                          >
+                            <img src={url} alt={`Poster ${idx + 1}`} className="w-full h-full object-cover" loading="lazy" />
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                 {/* Release Year & Country */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium text-slate-300">上映年份</label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-xs font-medium text-slate-400">上映年份</label>
                     <input
                       type="number"
                       value={state.year}
                       onChange={(e) => setField('year', e.target.value)}
-                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-2.5 sm:py-2 text-white focus:ring-2 focus:ring-indigo-500 outline-none text-base sm:text-sm"
+                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-white focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
                       placeholder="例如: 2024"
                     />
                   </div>
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium text-slate-300">国家 / 地区</label>
+                  <div className="space-y-1">
+                    <label className="text-xs font-medium text-slate-400">国家 / 地区</label>
                     <input
                       type="text"
                       value={state.country}
                       onChange={(e) => setField('country', e.target.value)}
-                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-2.5 sm:py-2 text-white focus:ring-2 focus:ring-indigo-500 outline-none text-base sm:text-sm"
-                      placeholder="例如: 美国"
+                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-white focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
+                      placeholder="例如: 中国大陆, 美国"
                     />
                   </div>
                 </div>
 
                 {/* Genre & Director */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium text-slate-300">类型 / 分类</label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-xs font-medium text-slate-400">类型 / 分类</label>
                     <input
                       type="text"
                       value={state.genre}
                       onChange={(e) => setField('genre', e.target.value)}
-                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-2.5 sm:py-2 text-white focus:ring-2 focus:ring-indigo-500 outline-none text-base sm:text-sm"
+                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-white focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
                       placeholder="科幻, 悬疑"
                     />
                   </div>
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium text-slate-300">导演 / 主创</label>
+                  <div className="space-y-1">
+                    <label className="text-xs font-medium text-slate-400">导演 / 主创</label>
                     <input
                       type="text"
                       value={state.director}
                       onChange={(e) => setField('director', e.target.value)}
-                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-2.5 sm:py-2 text-white focus:ring-2 focus:ring-indigo-500 outline-none text-base sm:text-sm"
+                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-white focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
                       placeholder="Christopher Nolan"
                     />
                   </div>
                 </div>
 
                 {/* Duration & Cast */}
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium text-slate-300">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-xs font-medium text-slate-400">
                       {state.mediaType === 'tv' ? '单集时长' : '时长'} (分钟)
                     </label>
                     <input
@@ -1271,98 +1295,176 @@ export const MovieForm: React.FC<MovieFormProps> = ({ initialData, existingMovie
                       min="0"
                       value={state.duration}
                       onChange={(e) => setField('duration', e.target.value)}
-                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-2.5 sm:py-2 text-white focus:ring-2 focus:ring-indigo-500 outline-none text-base sm:text-sm"
+                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-white focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
                       placeholder="120"
                     />
                   </div>
-                  <div className="sm:col-span-2 space-y-2">
-                    <label className="text-sm font-medium text-slate-300 flex items-center gap-2">
-                      <Users size={14} className="text-indigo-400" /> 主演
+                  <div className="sm:col-span-2 space-y-1">
+                    <label className="text-xs font-medium text-slate-400 flex items-center gap-1.5">
+                      <Users size={13} className="text-indigo-400" /> 主演
                     </label>
                     <input
                       type="text"
                       value={state.cast}
                       onChange={(e) => setField('cast', e.target.value)}
-                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-2.5 sm:py-2 text-white focus:ring-2 focus:ring-indigo-500 outline-none text-base sm:text-sm"
+                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-white focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
                       placeholder="多个演员用逗号分隔"
                     />
                   </div>
                 </div>
 
                 {/* Platform */}
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-slate-300 flex items-center gap-2">
-                    <Monitor size={14} className="text-indigo-400" /> 观看平台
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-slate-400 flex items-center gap-1.5">
+                    <Monitor size={13} className="text-indigo-400" /> 观看平台
                   </label>
                   <input
                     type="text"
                     value={state.platform}
                     onChange={(e) => setField('platform', e.target.value)}
-                    className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-2.5 sm:py-2 text-white focus:ring-2 focus:ring-indigo-500 outline-none text-base sm:text-sm"
+                    className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-white focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
                     placeholder="例如: Bilibili, Netflix, 院线..."
                   />
-                  <div className="flex flex-wrap gap-1.5 pt-1">
+                  <div className="flex flex-wrap gap-1.5 pt-0.5">
                     {['Bilibili', 'Netflix', 'Disney+', 'HBO', 'Apple TV+', '腾讯视频', '爱奇艺', '优酷', '本地', '院线'].map(p => (
                       <button
                         key={p}
                         type="button"
                         onClick={() => setField('platform', p)}
-                        className={`px-2.5 py-1 rounded-full text-xs font-medium transition-all border ${state.platform === p ? 'bg-indigo-600 border-indigo-500 text-white shadow-sm' : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-200'}`}
+                        className={`px-2.5 py-0.5 rounded-full text-xs font-medium transition-all border ${state.platform === p ? 'bg-indigo-600 border-indigo-500 text-white shadow-sm' : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-200'}`}
                       >
                         {p}
                       </button>
                     ))}
                   </div>
                 </div>
+
+                {/* TMDB Score */}
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-slate-400 flex items-center gap-1.5">
+                    <Star size={12} className="text-amber-400 fill-amber-400" />
+                    TMDB 平台评分
+                  </label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    min="0"
+                    max="10"
+                    value={state.tmdbRating !== undefined && state.tmdbRating !== null ? state.tmdbRating : ''}
+                    onChange={(e) => {
+                      const val = e.target.value !== '' ? parseFloat(e.target.value) : undefined;
+                      setField('tmdbRating', val);
+                    }}
+                    className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-white focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
+                    placeholder="例如: 8.5"
+                  />
+                </div>
+
+                {/* Overview */}
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-slate-400 flex items-center gap-1.5">
+                    <FileText size={13} className="text-indigo-400" />
+                    剧情简介
+                  </label>
+                  <textarea
+                    value={state.overview}
+                    onChange={(e) => setField('overview', e.target.value)}
+                    className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white focus:ring-2 focus:ring-indigo-500 outline-none h-20 resize-none text-sm placeholder:text-slate-500"
+                    placeholder="TMDB 自动填充剧情梗概，也可手动补充..."
+                  />
+                </div>
+
+                {/* Custom Tags in Advanced */}
+                <div className="space-y-2 pt-1 border-t border-slate-700/40">
+                  <div className="flex justify-between items-center">
+                    <label className="text-xs font-medium text-slate-400 flex items-center gap-1.5">
+                      <Tag size={13} className="text-indigo-400" /> 自定义标签 (Tags)
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const genreTokens = new Set(
+                          (state.genre || '')
+                            .split(/[,，/、\s]+/)
+                            .map(g => g.trim().toLowerCase())
+                            .filter(Boolean)
+                        );
+                        const smart = extractSmartTags({
+                          title: state.title,
+                          genre: state.genre,
+                          overview: state.overview,
+                          country: state.country,
+                          voteAverage: state.tmdbRating,
+                          mediaType: state.mediaType
+                        }).filter(t => !genreTokens.has(t.trim().toLowerCase()));
+
+                        const existingFiltered = state.tags.filter(t => !genreTokens.has(t.trim().toLowerCase()));
+                        const merged = Array.from(new Set([...existingFiltered, ...smart])).slice(0, 5);
+
+                        if (smart.length > 0 || merged.length !== state.tags.length) {
+                          setField('tags', merged);
+                          notify(`已智能生成 ${smart.length} 个特征标签`, 'success');
+                        } else {
+                          notify('未能提取出新标签，或均已包含在类型中', 'warning');
+                        }
+                      }}
+                      className="text-indigo-400 hover:text-indigo-300 text-xs flex items-center gap-1 hover:underline touch-manipulation"
+                    >
+                      <Sparkles size={11} /> 智能提取
+                    </button>
+                  </div>
+
+                  {state.tags.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 mb-1">
+                      {state.tags.map(t => (
+                        <span
+                          key={t}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-semibold bg-indigo-600/30 text-indigo-300 border border-indigo-500/40"
+                        >
+                          #{t}
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveTag(t)}
+                            className="hover:text-white text-indigo-400 transition-colors"
+                          >
+                            <X size={11} />
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={tagInput}
+                      onChange={(e) => setTagInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ',') {
+                          e.preventDefault();
+                          handleAddTag(tagInput);
+                        }
+                      }}
+                      onBlur={() => {
+                        if (tagInput.trim()) handleAddTag(tagInput);
+                      }}
+                      className="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-white focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
+                      placeholder="输入标签按回车添加..."
+                    />
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => handleAddTag(tagInput)}
+                      disabled={!tagInput.trim()}
+                      className="px-3 py-1 text-xs"
+                    >
+                      添加
+                    </Button>
+                  </div>
+                </div>
               </div>
             )}
-          </div>
-
-          {/* Overview / Synopsis Section */}
-          <div className="space-y-2">
-            <div className="flex justify-between items-center">
-              <label className="text-sm font-medium text-slate-300 flex items-center gap-1.5">
-                <FileText size={14} className="text-indigo-400" />
-                剧情简介
-              </label>
-              {state.overview ? (
-                <span className="text-xs text-slate-400">
-                  TMDB 自动获取 ({state.overview.length} 字)
-                </span>
-              ) : (
-                <span className="text-xs text-slate-500">
-                  TMDB 自动填充或手动补充
-                </span>
-              )}
-            </div>
-            <textarea
-              value={state.overview}
-              onChange={(e) => setField('overview', e.target.value)}
-              className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-2.5 text-white focus:ring-2 focus:ring-indigo-500 outline-none h-24 resize-none text-base sm:text-sm placeholder:text-slate-500"
-              placeholder="TMDB 自动填充剧情梗概，也可手动补充..."
-            />
-          </div>
-
-          {/* Review / Note Section */}
-          <div className="space-y-2 pb-20 sm:pb-0">
-            <div className="flex justify-between items-center">
-              <label className="text-sm font-medium text-slate-300">评价 / 笔记</label>
-              <button
-                type="button"
-                onClick={handleAiReview}
-                className="text-indigo-400 text-xs flex items-center gap-1 hover:text-indigo-300 transition-colors px-2 py-1 rounded hover:bg-slate-800 touch-manipulation"
-                disabled={isReviewLoading || !state.title}
-              >
-                {isReviewLoading ? <Sparkles size={14} className="animate-pulse" /> : <Sparkles size={14} />}
-                AI 帮我写
-              </button>
-            </div>
-            <textarea
-              value={state.review}
-              onChange={(e) => setField('review', e.target.value)}
-              className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-3 text-white focus:ring-2 focus:ring-indigo-500 outline-none h-28 resize-none text-base sm:text-sm"
-              placeholder="你觉得这部作品怎么样？"
-            />
           </div>
         </div>
 

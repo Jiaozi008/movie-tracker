@@ -5,6 +5,7 @@ interface KeyboardShortcutsOptions {
     onNewMovie?: () => void;
     onEscape?: () => void;
     onViewModeChange?: (mode: 'grid' | 'poster' | 'compact') => void;
+    onExperienceModeToggle?: () => void;
     onShowHelp?: () => void;
     enabled?: boolean;
 }
@@ -14,6 +15,7 @@ export function useKeyboardShortcuts({
     onNewMovie,
     onEscape,
     onViewModeChange,
+    onExperienceModeToggle,
     onShowHelp,
     enabled = true
 }: KeyboardShortcutsOptions) {
@@ -77,7 +79,14 @@ export function useKeyboardShortcuts({
                 return;
             }
 
-            // 6. '?' -> Shortcut Help
+            // 6. 'c' / 'C' -> Toggle Experience Mode (Classic Dashboard <-> Cinematic Temple)
+            if (e.key.toLowerCase() === 'c') {
+                e.preventDefault();
+                onExperienceModeToggle?.();
+                return;
+            }
+
+            // 7. '?' -> Shortcut Help
             if (e.key === '?') {
                 e.preventDefault();
                 onShowHelp?.();
@@ -87,5 +96,5 @@ export function useKeyboardShortcuts({
 
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [onSearchFocus, onNewMovie, onEscape, onViewModeChange, onShowHelp, enabled]);
+    }, [onSearchFocus, onNewMovie, onEscape, onViewModeChange, onExperienceModeToggle, onShowHelp, enabled]);
 }

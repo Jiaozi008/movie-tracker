@@ -4,27 +4,32 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { MobileNavBar } from '../components/MobileNavBar';
 
 describe('MobileNavBar Component', () => {
-    it('renders all 5 tabs properly and responds to tab change', () => {
+    it('renders all 5 tabs properly and responds to tab change and universe trigger', () => {
         const onTabChange = vi.fn();
         const onOpenAddMovie = vi.fn();
-        const onOpenAiButler = vi.fn();
         const onOpenSettings = vi.fn();
+        const onOpenPersonUniverse = vi.fn();
 
         const { rerender } = render(
             <MobileNavBar
                 activeTab="library"
                 onTabChange={onTabChange}
                 onOpenAddMovie={onOpenAddMovie}
-                onOpenAiButler={onOpenAiButler}
                 onOpenSettings={onOpenSettings}
+                onOpenPersonUniverse={onOpenPersonUniverse}
             />
         );
 
         expect(screen.getByText('影库')).toBeInTheDocument();
-        expect(screen.getByText('统计')).toBeInTheDocument();
+        expect(screen.getByText('宇宙')).toBeInTheDocument();
         expect(screen.getByText('打卡')).toBeInTheDocument();
-        expect(screen.getByText('助手')).toBeInTheDocument();
+        expect(screen.getByText('统计')).toBeInTheDocument();
         expect(screen.getByText('设置')).toBeInTheDocument();
+
+        // Click 宇宙 (Person Universe) tab
+        fireEvent.click(screen.getByText('宇宙'));
+        expect(onTabChange).toHaveBeenCalledWith('universe');
+        expect(onOpenPersonUniverse).toHaveBeenCalledTimes(1);
 
         // Click 统计 tab
         fireEvent.click(screen.getByText('统计'));
@@ -33,10 +38,6 @@ describe('MobileNavBar Component', () => {
         // Click 打卡 (center button)
         fireEvent.click(screen.getByLabelText('快速新增记录'));
         expect(onOpenAddMovie).toHaveBeenCalledTimes(1);
-
-        // Click 助手
-        fireEvent.click(screen.getByText('助手'));
-        expect(onOpenAiButler).toHaveBeenCalledTimes(1);
 
         // Click 设置
         fireEvent.click(screen.getByText('设置'));
@@ -48,8 +49,8 @@ describe('MobileNavBar Component', () => {
                 activeTab="stats"
                 onTabChange={onTabChange}
                 onOpenAddMovie={onOpenAddMovie}
-                onOpenAiButler={onOpenAiButler}
                 onOpenSettings={onOpenSettings}
+                onOpenPersonUniverse={onOpenPersonUniverse}
             />
         );
         fireEvent.click(screen.getByText('影库'));

@@ -24,6 +24,7 @@ export interface RewatchLog {
 export interface Movie {
   id: string;
   title: string;
+  originalTitle?: string; // 原名/外文原名（Markdown 归档导入导出使用）
   year: string;
   country?: string; // New field
   genre: string;
@@ -55,6 +56,7 @@ export interface Movie {
   watchHistory?: EpisodeWatchLog[]; // 追剧每集打卡时间流水
   rewatchHistory?: RewatchLog[]; // 电影/剧集重温多刷时间流水
   tags?: string[]; // 自定义标签（如“高分烧脑”、“治愈系”、“合家欢”）
+  quote?: string; // 经典台词 / 灵光一现短评
 }
 
 export interface MovieStats {
@@ -76,6 +78,7 @@ export interface GeminiMovieResponse {
   totalEpisodes?: number;
   duration?: number; // Minutes
   tags?: string[];
+  quote?: string; // 经典台词 / 灵光一现短评
 }
 
 export interface SyncConfig {

@@ -1,5 +1,7 @@
 import { Movie, MovieStatus } from '../types';
 import { generateUUID } from './uuidUtils';
+import { safeFormatDateTime, getTodayLocalDateString, parseLocalDate } from './dateUtils';
+import { exportMovieToMarkdown, exportLibraryToMarkdownMaster, exportLibraryToObsidianZip, parseMarkdownToMovies } from './markdownArchiveUtils';
 
 export const convertToCSV = (data: Movie[]) => {
   const headers = ['ID', '标题', '年份', '国家/地区', '类型', '导演', '主演', '评分', '平台评分', '状态', '评价', '剧情简介', '添加时间', '最后更新', '媒体类型', '当前集数', '总集数', '时长', '播放平台', '标签'];
@@ -26,8 +28,8 @@ export const convertToCSV = (data: Movie[]) => {
     m.status,
     escapeCsv(m.review),
     escapeCsv(m.overview),
-    new Date(m.addedAt).toLocaleString('zh-CN'),
-    new Date(m.lastUpdated).toLocaleString('zh-CN'),
+    safeFormatDateTime(m.addedAt),
+    safeFormatDateTime(m.lastUpdated),
     m.mediaType === 'tv' ? '电视剧' : '电影',
     m.currentEpisode || '',
     m.totalEpisodes || '',
@@ -39,13 +41,16 @@ export const convertToCSV = (data: Movie[]) => {
   return [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
 };
 
-export const downloadFile = (content: string, type: 'json' | 'csv', filenamePrefix: string = 'cinelog_backup') => {
+export const downloadFile = (content: string, type: 'json' | 'csv' | 'md', filenamePrefix: string = 'cinelog_backup') => {
     let mimeType = '';
     let extension = '';
 
     if (type === 'json') {
       mimeType = 'application/json';
       extension = 'json';
+    } else if (type === 'md') {
+      mimeType = 'text/markdown;charset=utf-8;';
+      extension = 'md';
     } else {
       mimeType = 'text/csv;charset=utf-8;';
       extension = 'csv';
@@ -57,11 +62,27 @@ export const downloadFile = (content: string, type: 'json' | 'csv', filenamePref
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `${filenamePrefix}_${new Date().toISOString().split('T')[0]}.${extension}`;
+    link.download = `${filenamePrefix}_${getTodayLocalDateString()}.${extension}`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
+};
+
+export const downloadBlobFile = (blob: Blob, filename: string) => {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+};
+
+export const downloadObsidianVault = async (movies: Movie[]) => {
+    const zipBlob = await exportLibraryToObsidianZip(movies);
+    downloadBlobFile(zipBlob, `CineLog_Obsidian_Vault_${getTodayLocalDateString()}.zip`);
 };
 
 // CSV Parsing Helper: Handles quoted strings correctly
@@ -126,7 +147,13 @@ export const parseImportFile = (file: File): Promise<Movie[]> => {
             let newMovies: Movie[] = [];
             
             try {
-                if (file.name.endsWith('.json')) {
+                if (file.name.endsWith('.md') || file.name.endsWith('.markdown')) {
+                    newMovies = parseMarkdownToMovies(content);
+                    if (newMovies.length === 0) {
+                        reject(new Error('未能在 Markdown 文件中识别出有效的影视元数据或 YAML 档案'));
+                        return;
+                    }
+                } else if (file.name.endsWith('.json')) {
                     const parsed = JSON.parse(content);
                     if (Array.isArray(parsed)) {
                         newMovies = parsed;
@@ -248,8 +275,8 @@ export const parseImportFile = (file: File): Promise<Movie[]> => {
                             } else if (key === 'tmdbRating' || key === 'currentEpisode' || key === 'totalEpisodes' || key === 'duration') {
                                 movie[key] = val ? parseFloat(val) : (key === 'tmdbRating' ? undefined : 0);
                             } else if (key === 'addedAt' || key === 'lastUpdated') {
-                                const ts = Date.parse(val);
-                                movie[key] = isNaN(ts) ? Date.now() : ts;
+                                const ts = parseLocalDate(val);
+                                movie[key] = ts;
                             } else if (key === 'tags') {
                                 movie.tags = val ? val.split(/[,;，；/、\s]+/).map(t => t.trim()).filter(Boolean) : undefined;
                             } else {

@@ -1,14 +1,16 @@
-
 import { useState, useEffect, useCallback } from 'react';
 import { Movie } from '../types';
-import { migrateAllMovieStatuses } from '../utils/migrationUtils';
+import { migrateAllMovieStatuses, sanitizeMovie } from '../utils/migrationUtils';
 import { mergeMovies } from '../utils/syncUtils';
-import { savePoster, deletePoster, getAllPosters, cleanupOrphanPosters } from '../utils/posterStorage';
+import { savePoster, deletePoster, getAllPosters, cleanupOrphanPosters, saveMoviesToIndexedDB, getMoviesFromIndexedDB } from '../utils/posterStorage';
 import { generateUUID } from '../utils/uuidUtils';
-
-const STORAGE_KEY = 'cinelog_movies_v1';
-const DELETED_STORAGE_KEY = 'cinelog_deleted_movies_v1';
-
+import { 
+  STORAGE_KEY, 
+  DELETED_STORAGE_KEY, 
+  cleanupObsoleteStorage, 
+  safeSaveMoviesToLocalStorage, 
+  safeSetItem 
+} from '../utils/storageUtils';
 
 export interface UseMoviesCallbacks {
   onSuccess?: (msg: string) => void;
@@ -16,33 +18,23 @@ export interface UseMoviesCallbacks {
   onInfo?: (msg: string) => void;
 }
 
-const isValidMovie = (movie: any): movie is Movie => {
-  return (
-    movie &&
-    typeof movie === 'object' &&
-    typeof movie.id === 'string' &&
-    typeof movie.title === 'string' &&
-    (typeof movie.year === 'string' || typeof movie.year === 'number') &&
-    typeof movie.genre === 'string' &&
-    typeof movie.rating === 'number' &&
-    typeof movie.status === 'string' &&
-    typeof movie.review === 'string' &&
-    typeof movie.posterColor === 'string' &&
-    typeof movie.addedAt === 'number' &&
-    typeof movie.lastUpdated === 'number' &&
-    (movie.mediaType === 'movie' || movie.mediaType === 'tv')
-  );
+export const isValidMovie = (movie: any): movie is Movie => {
+  return !!sanitizeMovie(movie);
 };
 
 export const useMovies = (callbacks?: UseMoviesCallbacks) => {
   const [movies, setMovies] = useState<Movie[]>(() => {
     try {
+      // 启动时先行扫描清理：清除废弃版本缓存并转存 Base64，瞬间释放宝贵存储
+      cleanupObsoleteStorage();
+
       const saved = localStorage.getItem(STORAGE_KEY);
       if (!saved) return [];
       const raw: Movie[] = JSON.parse(saved);
       const { migrated, didMigrate } = migrateAllMovieStatuses(raw);
       if (didMigrate) {
-        setTimeout(() => localStorage.setItem(STORAGE_KEY, JSON.stringify(migrated)), 0);
+        safeSaveMoviesToLocalStorage(migrated);
+        saveMoviesToIndexedDB(migrated).catch(() => {});
       }
       return migrated;
     } catch (e) {
@@ -62,8 +54,9 @@ export const useMovies = (callbacks?: UseMoviesCallbacks) => {
 
   const [isSaving, setIsSaving] = useState(false);
 
-  // IndexedDB Poster synchronization on startup
+  // IndexedDB Poster & Movies synchronization on startup
   useEffect(() => {
+    // 1. 同步 IndexedDB 本地海报到内存视图
     getAllPosters().then(posterMap => {
       if (posterMap && Object.keys(posterMap).length > 0) {
         setMovies(prev => prev.map(m => {
@@ -80,13 +73,30 @@ export const useMovies = (callbacks?: UseMoviesCallbacks) => {
         }
       });
     }).catch(() => {});
+
+    // 2. 双层容灾检查：从 IndexedDB 读取影片全量备份（预防极端情况下 LocalStorage 丢失）
+    getMoviesFromIndexedDB().then(idbMovies => {
+      if (idbMovies && Array.isArray(idbMovies) && idbMovies.length > 0) {
+        setMovies(prev => {
+          if (idbMovies.length > prev.length) {
+            const { merged, hasLocalChanges } = mergeMovies(prev, idbMovies, deletedMovies);
+            if (hasLocalChanges) {
+              safeSaveMoviesToLocalStorage(merged);
+              return merged;
+            }
+          }
+          return prev;
+        });
+      }
+    }).catch(() => {});
   }, []);
 
-  // Real-time Save Effect
+  // Real-time Save Effect (带防抖安全落盘)
   useEffect(() => {
     setIsSaving(true);
     const handler = setTimeout(() => {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(movies));
+      safeSaveMoviesToLocalStorage(movies);
+      saveMoviesToIndexedDB(movies).catch(() => {});
       setIsSaving(false);
     }, 500);
 
@@ -106,7 +116,12 @@ export const useMovies = (callbacks?: UseMoviesCallbacks) => {
       savePoster(newId, newMovie.posterImage);
     }
 
-    setMovies(prev => [newMovie, ...prev]);
+    setMovies(prev => {
+      const next = [newMovie, ...prev];
+      safeSaveMoviesToLocalStorage(next);
+      saveMoviesToIndexedDB(next).catch(() => {});
+      return next;
+    });
   }, []);
 
   const updateMovie = useCallback((movieData: Partial<Movie> & { id: string }) => {
@@ -114,11 +129,16 @@ export const useMovies = (callbacks?: UseMoviesCallbacks) => {
       savePoster(movieData.id, movieData.posterImage);
     }
 
-    setMovies(prev => prev.map(m => m.id === movieData.id ? {
-      ...m,
-      ...movieData,
-      lastUpdated: Date.now()
-    } : m));
+    setMovies(prev => {
+      const next = prev.map(m => m.id === movieData.id ? {
+        ...m,
+        ...movieData,
+        lastUpdated: Date.now()
+      } : m);
+      safeSaveMoviesToLocalStorage(next);
+      saveMoviesToIndexedDB(next).catch(() => {});
+      return next;
+    });
   }, []);
 
   const deleteMovie = useCallback((id: string) => {
@@ -130,7 +150,7 @@ export const useMovies = (callbacks?: UseMoviesCallbacks) => {
       if (movieToDelete) {
         setDeletedMovies(d => {
           const updated = { ...d, [id]: Date.now() };
-          localStorage.setItem(DELETED_STORAGE_KEY, JSON.stringify(updated));
+          safeSetItem(DELETED_STORAGE_KEY, JSON.stringify(updated));
           return updated;
         });
 
@@ -139,6 +159,8 @@ export const useMovies = (callbacks?: UseMoviesCallbacks) => {
         }
       }
 
+      safeSaveMoviesToLocalStorage(newMovies);
+      saveMoviesToIndexedDB(newMovies).catch(() => {});
       return newMovies;
     });
   }, [callbacks]);
@@ -155,11 +177,14 @@ export const useMovies = (callbacks?: UseMoviesCallbacks) => {
       setDeletedMovies(d => {
         const updated = { ...d };
         delete updated[movie.id];
-        localStorage.setItem(DELETED_STORAGE_KEY, JSON.stringify(updated));
+        safeSetItem(DELETED_STORAGE_KEY, JSON.stringify(updated));
         return updated;
       });
 
-      return [movie, ...prev];
+      const next = [movie, ...prev];
+      safeSaveMoviesToLocalStorage(next);
+      saveMoviesToIndexedDB(next).catch(() => {});
+      return next;
     });
   }, []);
 
@@ -177,10 +202,12 @@ export const useMovies = (callbacks?: UseMoviesCallbacks) => {
           ids.forEach(id => {
             updated[id] = now;
           });
-          localStorage.setItem(DELETED_STORAGE_KEY, JSON.stringify(updated));
+          safeSetItem(DELETED_STORAGE_KEY, JSON.stringify(updated));
           return updated;
         });
 
+        safeSaveMoviesToLocalStorage(remaining);
+        saveMoviesToIndexedDB(remaining).catch(() => {});
         callbacks?.onSuccess?.(`已删除 ${ids.size} 条记录`);
         return remaining;
       });
@@ -213,14 +240,15 @@ export const useMovies = (callbacks?: UseMoviesCallbacks) => {
 
     if (hadTombstones) {
       setDeletedMovies(updatedDeleted);
-      localStorage.setItem(DELETED_STORAGE_KEY, JSON.stringify(updatedDeleted));
+      safeSetItem(DELETED_STORAGE_KEY, JSON.stringify(updatedDeleted));
     }
 
     // 导入时以空墓碑或已清理的墓碑合并，确保所有导入数据 100% 入库
     const { merged } = mergeMovies(movies, migrated, updatedDeleted);
 
     setMovies(merged);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
+    safeSaveMoviesToLocalStorage(merged);
+    saveMoviesToIndexedDB(merged).catch(() => {});
     callbacks?.onSuccess?.(`成功导入并合并 ${migrated.length} 条记录（片库现共 ${merged.length} 条）。`);
   }, [movies, deletedMovies, callbacks]);
 
@@ -231,12 +259,22 @@ export const useMovies = (callbacks?: UseMoviesCallbacks) => {
       deletedMovies
     );
 
+    // 云端同步到的 Base64 海报异步写入 IndexedDB
+    cloudMovies.forEach(m => {
+      if (m.posterImage && m.posterImage.startsWith('data:image/')) {
+        savePoster(m.id, m.posterImage);
+      }
+    });
+
     if (hasLocalChanges) {
       setMovies(merged);
+      // 关键修复：立即安全落盘，不等待防抖，彻底解决时序竞争与移动端重复旧数据问题
+      safeSaveMoviesToLocalStorage(merged);
+      saveMoviesToIndexedDB(merged).catch(() => {});
     }
 
     setDeletedMovies(updatedDeletedRecords);
-    localStorage.setItem(DELETED_STORAGE_KEY, JSON.stringify(updatedDeletedRecords));
+    safeSetItem(DELETED_STORAGE_KEY, JSON.stringify(updatedDeletedRecords));
 
     return {
       hasLocalChanges,
@@ -257,13 +295,14 @@ export const useMovies = (callbacks?: UseMoviesCallbacks) => {
         removedIds.forEach(id => {
           updated[id] = now;
         });
-        localStorage.setItem(DELETED_STORAGE_KEY, JSON.stringify(updated));
+        safeSetItem(DELETED_STORAGE_KEY, JSON.stringify(updated));
         return updated;
       });
     }
 
     setMovies(migrated);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(migrated));
+    safeSaveMoviesToLocalStorage(migrated);
+    saveMoviesToIndexedDB(migrated).catch(() => {});
   }, []);
 
   return {

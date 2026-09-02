@@ -88,7 +88,7 @@ export async function fetchStreamFromProxy(
 }
 
 export const fetchMovieMetadata = async (title: string): Promise<GeminiMovieResponse> => {
-  const contents = `Provide metadata for the media title "${title}". Identify if it is a "movie" or "tv" series. Return JSON. ensure the summary, genre, country and director are in Chinese (Simplified). Include 2-4 concise, catchy Chinese tags (such as "悬疑烧脑", "温暖治愈", "赛博朋克", "高分神作") in the "tags" array field. If it is a TV series, estimate the total number of episodes and the average runtime per episode (in minutes). If it is a movie, provide the runtime (in minutes).`;
+  const contents = `Provide metadata for the media title "${title}". Identify if it is a "movie" or "tv" series. Return JSON. ensure the summary, genre, country and director are in Chinese (Simplified). Include 2-4 concise, catchy Chinese tags (such as "悬疑烧脑", "温暖治愈", "赛博朋克", "高分神作") in the "tags" array field. Include an iconic classic quote or dialogue authentic to this specific film/show (in Chinese, without quotation marks, max 35 characters) in the "quote" field. If no famous quote exists, provide a memorable punchy 1-sentence highlight. If it is a TV series, estimate the total number of episodes and the average runtime per episode (in minutes). If it is a movie, provide the runtime (in minutes).`;
 
   // We specify these because we want JSON parsing
   const responseText = await fetchFromProxy({
@@ -97,9 +97,6 @@ export const fetchMovieMetadata = async (title: string): Promise<GeminiMovieResp
   });
 
   try {
-    // Note: Since we use proxy, we might need to be careful with JSON formatting
-    // If we want guaranteed JSON, we'd use responseSchema in the proxy, 
-    // but for simplicity in this migration we'll try to find the JSON block.
     const jsonMatch = responseText.match(/\{[\s\S]*\}/);
     const cleanedJson = jsonMatch ? jsonMatch[0] : responseText;
     return JSON.parse(cleanedJson) as GeminiMovieResponse;
@@ -131,36 +128,123 @@ export const generateAiReview = async (
   });
 };
 
-export const translateToChinese = async (text: string, context: 'name' | 'genre' | 'country' = 'name'): Promise<string> => {
-  if (!text) return text;
+export const generateAiQuote = async (
+  title: string,
+  mediaType: string = 'movie',
+  year?: string,
+  director?: string,
+  overview?: string,
+  onChunk?: (accumulatedText: string, latestChunk: string) => void
+): Promise<string> => {
+  const typeText = mediaType === 'tv' ? "电视剧/剧集" : "电影";
+  const contextParts = [
+    `作品名称: 《${title}》`,
+    `类型: ${typeText}`,
+    year ? `上映年份: ${year}` : '',
+    director ? `导演/主创: ${director}` : '',
+    overview ? `剧情简介: ${overview.slice(0, 120)}` : ''
+  ].filter(Boolean).join('\n');
 
-  let prompt = `你是一个专业的影视翻译专家。请将以下${context === 'genre' ? '类型标签' : '影视专有名词（导演、主演或国家）'}翻译为地道的简体中文。`;
+  const contents = `你是一个资深电影台词与经典金句研究专家。请为指定的影视作品提取或生成最经典、最震撼人心的台词或短评：
+
+${contextParts}
+
+严格要求：
+1. 必须是《${title}》这部片子中真实出现过、最具辨识度与代表性的经典台词（必须精确匹配该片本身，严禁张冠李戴）。
+2. 若该片为无对白短片、小众纪录片或无广泛流传的经典台词，请撰写一句极具电影美感、直击核心主题的灵光一现短评。
+3. 纯简体中文输出，字数控制在 8 ~ 35 字以内，短小精悍，富有感染力。
+4. 绝对不要添加任何书名号、双引号、作者角色标注或前后解释，只直接输出台词/金句本身。`;
+
+  let quoteText = '';
+  if (onChunk) {
+    quoteText = await fetchStreamFromProxy({
+      model: "gemini-2.5-flash",
+      contents
+    }, onChunk);
+  } else {
+    quoteText = await fetchFromProxy({
+      model: "gemini-2.5-flash",
+      contents
+    });
+  }
+
+  return (quoteText || '')
+    .trim()
+    .replace(/^["“'「『\s]+/, '')
+    .replace(/["”'」』\s]+$/, '')
+    .trim();
+};
+
+export const translateToChinese = async (
+  text: string,
+  context: 'name' | 'genre' | 'country' | 'overview' | 'title' = 'name'
+): Promise<string> => {
+  if (!text || !text.trim()) return text;
+  const trimmed = text.trim();
+
+  // 若已经是纯中文/标点，直接返回节省请求时间
+  if (/^[\u4e00-\u9fa5\s，、·！…（）—\d\-]+$/.test(trimmed)) {
+    return trimmed;
+  }
+
+  let prompt = `你是一个专业的国际影视译者与汉化专家。请将以下待翻译文本准确翻译为地道、标准的简体中文。`;
 
   if (context === 'genre') {
     prompt += `
-    - "Sci-Fi & Fantasy" 必须翻译为 "科幻, 奇幻"
-    - "Sci-Fi" 必须翻译为 "科幻"
-    - "Fantasy" 必须翻译为 "奇幻"
-    - "Action & Adventure" 翻译为 "动作, 冒险"
-    - 多个标签请用中文逗号 "，" 分隔。`;
-  } else {
+- 待翻译内容为影视类型/流派标签。
+- "Sci-Fi & Fantasy" / "Sci-Fi and Fantasy" 翻译为 "科幻, 奇幻"
+- "Action & Adventure" 翻译为 "动作, 冒险"
+- "War & Politics" 翻译为 "战争, 政治"
+- "Science Fiction" / "Sci-Fi" 翻译为 "科幻"
+- "Fantasy" 翻译为 "奇幻"
+- "Crime" 翻译为 "犯罪"
+- "Mystery" 翻译为 "悬疑"
+- "Thriller" 翻译为 "惊悚"
+- "Animation" 翻译为 "动画"
+- "Drama" 翻译为 "剧情"
+- "Comedy" 翻译为 "喜剧"
+- "Romance" 翻译为 "爱情"
+- "Documentary" 翻译为 "纪录"
+- "Horror" 翻译为 "恐怖"
+- "Family" 翻译为 "家庭"
+- 多个类型请用逗号与空格 ", " 分隔。`;
+  } else if (context === 'name') {
     prompt += `
-    - 即使是人名也请直接音译或查证后提供中文名。
-    - 绝对不要返回任何英文描述或解释。`;
+- 待翻译内容为影视导演、主演、编剧或制片人姓名（可能为英文、韩文、日文汉字/假名、法文、西班牙文、德文、俄文、泰文等多国语言）。
+- 请提供中国大陆公认通用的简体中文译名（如 "Christopher Nolan" -> "克里斯托弗·诺兰", "Bong Joon-ho" / "봉준호" -> "奉俊昊", "Hayao Miyazaki" / "宮崎駿" -> "宫崎骏", "Denis Villeneuve" -> "丹尼斯·维伦纽瓦", "Park Chan-wook" / "박찬욱" -> "朴赞郁"）。
+- 若包含多个人名（以逗号或斜杠分隔），请依次翻译并用逗号和空格 ", " 分隔保留。`;
+  } else if (context === 'country') {
+    prompt += `
+- 待翻译内容为制片国家或地区。
+- 请转换为标准的中文国名（如 "United States" -> "美国", "United Kingdom" -> "英国", "South Korea" -> "韩国", "Japan" -> "日本", "Australia" -> "澳大利亚"）。
+- 多个国家请用 ", " 分隔。`;
+  } else if (context === 'overview') {
+    prompt += `
+- 待翻译内容为影视作品的剧情简介梗概。
+- 请翻译为通顺、优美、精炼且富有吸引力的简体中文影视故事梗概，保留原剧情核心脉络，语句流畅无翻译腔。`;
+  } else if (context === 'title') {
+    prompt += `
+- 待翻译内容为影视作品外文原名。
+- 请提供该作品在中国大陆公认通用的官方中文译名。`;
   }
 
-  prompt += `\n\n待翻译文本: "${text}"\n只返回翻译后的纯文本。`;
+  prompt += `\n\n待翻译文本: "${trimmed}"\n\n注意：只返回翻译后的纯文本结果，绝对不要带有任何说明、引号、问答前缀或解释。`;
 
   try {
-    return await fetchFromProxy({
+    const res = await fetchFromProxy({
       model: "gemini-2.5-flash",
       contents: prompt
     });
+    return (res || '')
+      .trim()
+      .replace(/^["“'「『]+/, '')
+      .replace(/["”'」』]+$/, '')
+      .trim() || trimmed;
   } catch (error) {
     console.error("Translation Error:", error);
-    return text;
+    return trimmed;
   }
-}
+};
 
 export const generateButlerResponse = async (
   movies: Movie[],

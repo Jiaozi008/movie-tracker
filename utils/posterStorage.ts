@@ -4,9 +4,12 @@
  * 避免膨胀 LocalStorage（突破 5MB 限制）及避免云同步 Gist 超限。
  */
 
+import { Movie } from '../types';
+
 const DB_NAME = 'cinelog_posters_db';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE_NAME = 'posters';
+const MOVIES_STORE_NAME = 'movies_cache';
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
@@ -31,6 +34,9 @@ export const getDB = (): Promise<IDBDatabase> => {
                     const db = (event.target as IDBOpenDBRequest).result;
                     if (!db.objectStoreNames.contains(STORE_NAME)) {
                         db.createObjectStore(STORE_NAME);
+                    }
+                    if (!db.objectStoreNames.contains(MOVIES_STORE_NAME)) {
+                        db.createObjectStore(MOVIES_STORE_NAME);
                     }
                 };
 
@@ -179,5 +185,57 @@ export const cleanupOrphanPosters = async (activeMovieIds: string[]): Promise<vo
         };
     } catch (err) {
         console.warn('IndexedDB cleanupOrphanPosters error:', err);
+    }
+};
+
+/**
+ * 将全部影片列表存入 IndexedDB（作为超大片库双层备份与容灾持久化）
+ */
+export const saveMoviesToIndexedDB = async (movies: Movie[]): Promise<void> => {
+    if (!isIndexedDBAvailable() || !Array.isArray(movies)) return;
+
+    try {
+        const db = await getDB();
+        if (!db.objectStoreNames.contains(MOVIES_STORE_NAME)) return;
+
+        return new Promise<void>((resolve, reject) => {
+            const tx = db.transaction(MOVIES_STORE_NAME, 'readwrite');
+            const store = tx.objectStore(MOVIES_STORE_NAME);
+            const request = store.put(movies, 'latest_movies');
+
+            request.onsuccess = () => resolve();
+            request.onerror = () => reject(request.error);
+        });
+    } catch (err) {
+        console.warn('IndexedDB saveMoviesToIndexedDB error:', err);
+    }
+};
+
+/**
+ * 从 IndexedDB 读取影片备份列表
+ */
+export const getMoviesFromIndexedDB = async (): Promise<Movie[] | null> => {
+    if (!isIndexedDBAvailable()) return null;
+
+    try {
+        const db = await getDB();
+        if (!db.objectStoreNames.contains(MOVIES_STORE_NAME)) return null;
+
+        return new Promise<Movie[] | null>((resolve) => {
+            const tx = db.transaction(MOVIES_STORE_NAME, 'readonly');
+            const store = tx.objectStore(MOVIES_STORE_NAME);
+            const request = store.get('latest_movies');
+
+            request.onsuccess = () => {
+                const result = request.result;
+                resolve(Array.isArray(result) ? result : null);
+            };
+            request.onerror = () => {
+                resolve(null);
+            };
+        });
+    } catch (err) {
+        console.warn('IndexedDB getMoviesFromIndexedDB error:', err);
+        return null;
     }
 };

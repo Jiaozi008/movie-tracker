@@ -4,6 +4,7 @@ import html2canvas from 'html2canvas';
 import { X, Download, Star, Film, Tv, Clock, Copy, Sparkles, Flame, Trophy, Smile, Zap, Tag, Calendar, BarChart3, Check } from 'lucide-react';
 import { calculateMovieDuration, calculateTvDuration, calculateTotalEpisodes, calculateRewatchKing, calculateSpeedDemon, calculateJudgePersona } from '../utils/statsCalculator';
 import { normalizeTitle } from '../utils/titleNormalizer';
+import { formatLocalDateKey, getTodayLocalDateString, safeFormatDate } from '../utils/dateUtils';
 
 interface ReportShareModalProps {
     movies: Movie[];
@@ -168,10 +169,18 @@ export const ReportShareModal: React.FC<ReportShareModalProps> = ({ movies, onCl
             if (m.status !== MovieStatus.PLANNING) {
                 if (m.watchHistory && m.watchHistory.length > 0) {
                     m.watchHistory.forEach(h => {
-                        activeDaysSet.add(new Date(h.date).toISOString().split('T')[0]);
+                        const k = formatLocalDateKey(h.date);
+                        if (k) activeDaysSet.add(k);
                     });
                 } else if (m.addedAt) {
-                    activeDaysSet.add(new Date(m.addedAt).toISOString().split('T')[0]);
+                    const k = formatLocalDateKey(m.addedAt);
+                    if (k) activeDaysSet.add(k);
+                }
+                if (m.rewatchHistory && m.rewatchHistory.length > 0) {
+                    m.rewatchHistory.forEach(rh => {
+                        const k = formatLocalDateKey(rh.date);
+                        if (k) activeDaysSet.add(k);
+                    });
                 }
             }
         });
@@ -245,7 +254,7 @@ export const ReportShareModal: React.FC<ReportShareModalProps> = ({ movies, onCl
                     const url = URL.createObjectURL(blob);
                     const a = document.createElement('a');
                     a.href = url;
-                    a.download = `CineLog_${reportTitle}_${new Date().toISOString().split('T')[0]}.png`;
+                    a.download = `CineLog_${reportTitle}_${getTodayLocalDateString()}.png`;
                     a.click();
                     URL.revokeObjectURL(url);
                     onToast?.('观影报告长图已成功保存到本地', 'success');
@@ -383,7 +392,7 @@ export const ReportShareModal: React.FC<ReportShareModalProps> = ({ movies, onCl
                                 <p className="text-xs text-slate-400 mt-1 flex items-center gap-2">
                                     <span>共记录 {stats.totalRecords} 次观影足迹</span>
                                     <span>·</span>
-                                    <span>{new Date().toLocaleDateString('zh-CN')} 生成</span>
+                                    <span>{safeFormatDate(Date.now())} 生成</span>
                                 </p>
                             </div>
 

@@ -25,10 +25,15 @@ import {
   Pause,
   Camera,
   Sparkles,
+  FileText,
+  FolderArchive,
+  Layers,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { Html5QrcodeScanner } from 'html5-qrcode';
 import LZString from 'lz-string';
+import { downloadObsidianVault, downloadFile, parseImportFile } from '../utils/fileUtils';
+import { exportLibraryToMarkdownMaster } from '../utils/markdownArchiveUtils';
 
 interface SyncModalProps {
   isOpen: boolean;
@@ -61,14 +66,17 @@ export const SyncModal: React.FC<SyncModalProps> = ({
   syncStatus,
   statusMessage,
 }) => {
-  const [activeTab, setActiveTab] = useState<'cloud' | 'local'>('cloud');
+  const [activeTab, setActiveTab] = useState<'cloud' | 'local' | 'markdown'>('cloud');
   const [tempToken, setTempToken] = useState(config.githubToken);
   const [isVerifying, setIsVerifying] = useState(false);
 
   // Local Sync States
   const [localJson, setLocalJson] = useState('');
   const [isCopied, setIsCopied] = useState(false);
+  const [isMdCopied, setIsMdCopied] = useState(false);
+  const [isExportingZip, setIsExportingZip] = useState(false);
   const [importError, setImportError] = useState('');
+  const mdFileInputRef = useRef<HTMLInputElement>(null);
 
   // QR Code States
   const [showQrMode, setShowQrMode] = useState<'none' | 'send' | 'receive'>('none');
@@ -422,6 +430,19 @@ export const SyncModal: React.FC<SyncModalProps> = ({
           >
             <Smartphone size={16} /> 本地传输
           </button>
+          <button
+            onClick={() => {
+              setActiveTab('markdown');
+              setShowQrMode('none');
+            }}
+            className={`flex-1 py-3 text-sm font-medium transition-colors flex items-center justify-center gap-2 ${
+              activeTab === 'markdown'
+                ? 'text-indigo-400 border-b-2 border-indigo-400 bg-slate-800/30'
+                : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+            }`}
+          >
+            <FileText size={16} /> Markdown 归档
+          </button>
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 sm:p-6 custom-scrollbar">
@@ -675,6 +696,133 @@ export const SyncModal: React.FC<SyncModalProps> = ({
                   </div>
                 </>
               )}
+            </div>
+          )}
+
+          {/* MARKDOWN TAB */}
+          {activeTab === 'markdown' && (
+            <div className="space-y-6">
+              {/* Obsidian Vault ZIP */}
+              <div className="p-4 rounded-xl bg-gradient-to-br from-indigo-950/60 to-purple-950/60 border border-indigo-500/30 space-y-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2 rounded-lg bg-indigo-500/20 text-indigo-400">
+                    <FolderArchive size={20} />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-white">Obsidian / Logseq 专属笔记包 (.zip)</h3>
+                    <p className="text-xs text-slate-400">每部作品生成独立 Markdown 文件，含 YAML 属性与双向链接</p>
+                  </div>
+                </div>
+
+                <div className="text-xs text-slate-300 space-y-1 pl-1">
+                  <p>✨ 自动按「电影 / 电视剧」分目录归档</p>
+                  <p>🔗 包含 <code className="text-indigo-300">[[导演]]</code>、<code className="text-indigo-300">[[演员]]</code>、<code className="text-indigo-300">[[平台]]</code> 双向链接与 <code className="text-indigo-300">#类型</code> 标签</p>
+                  <p>📄 随附《README_观影总览.md》目录总索引页</p>
+                </div>
+
+                <Button
+                  onClick={async () => {
+                    setIsExportingZip(true);
+                    try {
+                      await downloadObsidianVault(movies);
+                    } catch (e) {
+                      alert('导出 Obsidian 笔记包失败');
+                    } finally {
+                      setIsExportingZip(false);
+                    }
+                  }}
+                  disabled={isExportingZip || movies.length === 0}
+                  className="w-full bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-medium"
+                >
+                  {isExportingZip ? (
+                    <Loader2 size={16} className="animate-spin mr-2" />
+                  ) : (
+                    <Download size={16} className="mr-2" />
+                  )}
+                  {isExportingZip ? '正在打包笔记包...' : `一键导出 Obsidian 笔记包 (${movies.length} 部)`}
+                </Button>
+              </div>
+
+              {/* Master Markdown Single File */}
+              <div className="p-4 rounded-xl bg-slate-800/40 border border-slate-700/80 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <FileText size={18} className="text-amber-400" />
+                    <div>
+                      <h4 className="text-sm font-semibold text-white">Master 总览纯文本单文件</h4>
+                      <p className="text-xs text-slate-400">单篇聚合 Markdown 档案，适合 Notion、Typora 或博客发布</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    className="flex-1"
+                    onClick={() => {
+                      const md = exportLibraryToMarkdownMaster(movies);
+                      downloadFile(md, 'md', 'CineLog_Master_Archive');
+                    }}
+                  >
+                    <Download size={14} className="mr-1.5" /> 导出 .md 文件
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    className="flex-1"
+                    onClick={() => {
+                      const md = exportLibraryToMarkdownMaster(movies);
+                      navigator.clipboard.writeText(md);
+                      setIsMdCopied(true);
+                      setTimeout(() => setIsMdCopied(false), 2000);
+                    }}
+                  >
+                    {isMdCopied ? <Check size={14} className="mr-1.5 text-emerald-400" /> : <Copy size={14} className="mr-1.5" />}
+                    {isMdCopied ? '已复制全文' : '复制 Markdown'}
+                  </Button>
+                </div>
+              </div>
+
+              {/* Import Markdown Section */}
+              <div className="p-4 rounded-xl bg-slate-800/40 border border-slate-700/80 space-y-3">
+                <div className="flex items-center gap-2">
+                  <Upload size={18} className="text-emerald-400" />
+                  <div>
+                    <h4 className="text-sm font-semibold text-white">导入 Markdown 笔记档案 (.md)</h4>
+                    <p className="text-xs text-slate-400">支持导入带有 YAML Frontmatter 的 Obsidian / Notion 导出的影视笔记</p>
+                  </div>
+                </div>
+
+                <input
+                  type="file"
+                  ref={mdFileInputRef}
+                  accept=".md,.markdown"
+                  className="hidden"
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    try {
+                      const imported = await parseImportFile(file);
+                      if (imported.length > 0 && window.confirm(`成功解析 ${imported.length} 条影视笔记！确认导入并合并到当前资料库吗？`)) {
+                        onImportMovies(imported);
+                        onClose();
+                      }
+                    } catch (err: any) {
+                      alert(err.message || '导入 Markdown 文件失败');
+                    }
+                    if (e.target) e.target.value = '';
+                  }}
+                />
+
+                <Button
+                  onClick={() => mdFileInputRef.current?.click()}
+                  variant="secondary"
+                  className="w-full border-dashed border-emerald-500/40 hover:border-emerald-500 text-emerald-300"
+                >
+                  <Upload size={16} className="mr-2" /> 选择 .md 笔记文件导入
+                </Button>
+              </div>
             </div>
           )}
         </div>
