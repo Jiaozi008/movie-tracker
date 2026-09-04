@@ -574,17 +574,17 @@ export default function App() {
                         <div className="flex items-center p-0.5 bg-slate-800/90 rounded-full border border-slate-700/80 shadow-inner ml-1 sm:ml-3">
                             <button
                                 onClick={() => handleExperienceModeToggle('classic')}
-                                className={`flex items-center gap-1 px-2.5 sm:px-3 py-1 rounded-full text-xs font-semibold transition-all ${experienceMode === 'classic' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200'}`}
+                                className={`flex items-center gap-1 px-2.5 sm:px-3 py-1 rounded-full text-xs font-semibold transition-all whitespace-nowrap ${experienceMode === 'classic' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200'}`}
                                 title="经典全功能数据仪表盘"
                             >
-                                <span>🏛️</span> <span className="text-[11px] sm:text-xs">经典数据</span>
+                                <span className="shrink-0">🏛️</span> <span className="text-[11px] sm:text-xs whitespace-nowrap">经典数据</span>
                             </button>
                             <button
                                 onClick={() => handleExperienceModeToggle('cinematic')}
-                                className={`flex items-center gap-1 px-2.5 sm:px-3 py-1 rounded-full text-xs font-semibold transition-all ${experienceMode === 'cinematic' ? 'bg-gradient-to-r from-amber-500 to-amber-600 text-slate-950 shadow-md font-bold' : 'text-slate-400 hover:text-slate-200'}`}
+                                className={`flex items-center gap-1 px-2.5 sm:px-3 py-1 rounded-full text-xs font-semibold transition-all whitespace-nowrap ${experienceMode === 'cinematic' ? 'bg-gradient-to-r from-amber-500 to-amber-600 text-slate-950 shadow-md font-bold' : 'text-slate-400 hover:text-slate-200'}`}
                                 title="沉浸电影殿堂模式"
                             >
-                                <span>🎬</span> <span className="text-[11px] sm:text-xs">电影殿堂</span>
+                                <span className="shrink-0">🎬</span> <span className="text-[11px] sm:text-xs whitespace-nowrap">电影殿堂</span>
                             </button>
                         </div>
                     </div>
@@ -663,21 +663,21 @@ export default function App() {
                             onClick={() => setShowPersonUniverse(true)}
                             variant="secondary"
                             size="sm"
-                            className="hidden sm:flex shadow-sm text-amber-300 hover:text-amber-200 border-amber-500/30 hover:bg-amber-500/10 items-center gap-1.5"
+                            className="hidden sm:flex shadow-sm text-amber-300 hover:text-amber-200 border-amber-500/30 hover:bg-amber-500/10 items-center gap-1.5 whitespace-nowrap"
                             title="影人脉络宇宙与全收集总排行榜"
                         >
                             <Trophy size={15} className="text-amber-400" />
-                            <span>影人宇宙</span>
+                            <span className="whitespace-nowrap">影人宇宙</span>
                         </Button>
 
                         {/* 移动端顶部金标：影人宇宙直达入口 */}
                         <button
                             onClick={() => setShowPersonUniverse(true)}
-                            className="sm:hidden flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 active:scale-95 transition-all text-xs font-semibold shadow-sm shadow-amber-500/10 shrink-0"
+                            className="sm:hidden flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 active:scale-95 transition-all text-xs font-semibold shadow-sm shadow-amber-500/10 shrink-0 whitespace-nowrap"
                             title="影人脉络宇宙与全收集总排行榜"
                         >
                             <Trophy size={13} className="text-amber-400 shrink-0" />
-                            <span>影人宇宙</span>
+                            <span className="whitespace-nowrap">影人宇宙</span>
                         </button>
 
                         {/* 移动端顶部 AI 助手入口 */}

@@ -1,3 +1,12 @@
+### [v1.9.8 移动端体验优化与生产环境部署] 表单防键盘遮挡 + 顶栏防换行 + Cloudflare Pages 部署完成 ☑️ (2026-09-04 22:25)
+- [x] 表单防键盘遮挡优化：在 `components/MovieForm.tsx` 注入 `overflow-y-auto overscroll-contain` 与 `min-h-full`，并在滚动区绑定 `onFocusCapture` 实现聚焦元素延时 250ms 居中视口滚动 (`scrollIntoView`) ☑️ (2026-09-04 22:22)
+- [x] 顶栏导航按钮防折行加固：在 `App.tsx` 针对模式切换胶囊按钮（经典数据/电影殿堂）与「🏆 影人宇宙」金标按钮增加 `whitespace-nowrap` 与 `shrink-0`，杜绝小屏幕紧凑排版下文字意外折行 ☑️ (2026-09-04 22:22)
+- [x] 本地全量检查与版本升级：23 个测试套件 172 个用例 100% 全部通过，生产打包顺利通过，升级版本号至 v1.9.8 并同步更新日志 ☑️ (2026-09-04 22:25)
+- [x] Cloudflare Pages 生产部署：通过 `npm run deploy` 编译并安全部署至 Cloudflare 边缘节点，生产环境 `https://movie-tracker-6if.pages.dev` 运行正常 ☑️ (2026-09-04 22:25)
+- [x] 部署记录与文档同步：已生成 `.ai/records/2026-09-04_v1.9.8生产环境部署至Cloudflare.md` ☑️ (2026-09-04 22:25)
+
+---
+
 ### [v1.9.7 生产环境部署上线] Cloudflare Pages 持续集成自动化部署完成 ☑️ (2026-09-02 18:27)
 - [x] 本地全量检查：单元测试 23 套件 172 测试用例 100% 通过，Vite 6.4.1 生产打包成功生成 `dist/`（`index-zU7yxz8y.js` / `index-FIryHCu5.css`） ☑️ (2026-09-02 18:09)
 - [x] 代码脱敏与安全推送：清除脚本内硬编码 Token，安全配置持久化至 `.env.local`，代码顺利推送至 GitHub `main` 分支（`5cf24dc`） ☑️ (2026-09-02 18:25)

@@ -634,11 +634,11 @@ export const MovieForm: React.FC<MovieFormProps> = ({ initialData, existingMovie
   const beforeYesterdayStr = getOffsetDateString(-2);
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center sm:p-4 bg-black/80">
+    <div className="fixed inset-0 z-[70] flex items-center justify-center overflow-y-auto overscroll-contain bg-black/80 sm:p-4">
       <form
         onSubmit={handleSubmit}
         noValidate
-        className="bg-slate-900 w-full h-full sm:h-auto sm:max-h-[90vh] sm:rounded-2xl sm:max-w-lg shadow-2xl flex flex-col transition-all overflow-hidden"
+        className="bg-slate-900 w-full min-h-full sm:min-h-0 sm:h-auto sm:max-h-[90vh] sm:rounded-2xl sm:max-w-lg my-auto sm:my-0 shadow-2xl flex flex-col transition-colors overflow-hidden"
         style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
       >
         {/* Header */}
@@ -695,7 +695,18 @@ export const MovieForm: React.FC<MovieFormProps> = ({ initialData, existingMovie
         )}
 
         {/* Scrollable Content */}
-        <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 custom-scrollbar no-scrollbar bg-slate-900/50">
+        <div
+          className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 custom-scrollbar no-scrollbar bg-slate-900/50"
+          onFocusCapture={(e) => {
+            // 手机端键盘弹出时，确保被聚焦的输入框始终可见，避免被键盘遮挡导致无法输入
+            const el = e.target as HTMLElement;
+            if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT')) {
+              window.setTimeout(() => {
+                el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+              }, 250);
+            }
+          }}
+        >
           {/* Hidden File Input for Image Upload */}
           <input
             type="file"
