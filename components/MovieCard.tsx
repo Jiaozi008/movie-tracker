@@ -7,7 +7,7 @@ import { Trash2, Edit2, Calendar, Tv, Film, Check, ChevronDown, ChevronUp, User,
 import { ShareCard } from './ShareCard';
 import { normalizeTitle } from '../utils/titleNormalizer';
 import { safeFormatDate, formatRelativeWatchDate } from '../utils/dateUtils';
-import { clusterWatchHistoryByDay } from '../utils/episodeUtils';
+import { clusterWatchHistoryByDay, calculateMovieActualWatchTime } from '../utils/episodeUtils';
 import { exportMovieToMarkdown } from '../utils/markdownArchiveUtils';
 
 interface MovieCardProps {
@@ -91,6 +91,39 @@ export const MovieCard: React.FC<MovieCardProps> = ({
     const currentEp = movie.currentEpisode || 0;
     const totalEp = movie.totalEpisodes || 0;
     const progressPercent = totalEp > 0 ? Math.min(100, Math.max(0, (currentEp / totalEp) * 100)) : 0;
+
+    // 实际观影时长（常驻展示）：优先使用已存字段，缺失时实时按 时长×集数÷倍速 兜底计算
+    const actualWatchTimeMinutes = useMemo(() => {
+        if (typeof movie.actualWatchTime === 'number' && movie.actualWatchTime > 0) {
+            return movie.actualWatchTime;
+        }
+        const duration = movie.duration || 0;
+        if (duration <= 0) return null;
+        const episodes = movie.watchHistory?.length || movie.currentEpisode || 0;
+        if (isTv && episodes <= 0) return null;
+        const computed = calculateMovieActualWatchTime(movie);
+        return computed > 0 ? computed : null;
+    }, [movie, isTv]);
+
+    const actualWatchTimeText = useMemo(() => {
+        if (!actualWatchTimeMinutes) return '—';
+        const h = Math.floor(actualWatchTimeMinutes / 60);
+        const m = actualWatchTimeMinutes % 60;
+        return h > 0 ? `${h}小时${m}分` : `${m}分钟`;
+    }, [actualWatchTimeMinutes]);
+
+    // 折算依据说明（让「实际观影时长」的数值来源可追溯）
+    const actualWatchTimeBasis = useMemo(() => {
+        const duration = movie.duration || 0;
+        const speed = movie.playbackSpeed || 1;
+        if (isTv) {
+            const episodes = movie.watchHistory?.length || movie.currentEpisode || 0;
+            if (speedSegments.length > 1) return `依据 ${speedSegments.length} 段不同倍速流水精确折算`;
+            if (episodes > 0 && duration > 0) return `${episodes} 集 × ${duration} 分钟${speed !== 1 ? ` ÷ ${speed}x` : ''}`;
+            return '';
+        }
+        return duration > 0 ? `${duration} 分钟${speed !== 1 ? ` ÷ ${speed}x` : ''}` : '';
+    }, [movie, isTv, speedSegments.length]);
 
     // 1. Media Type Distinct Styles
     const mediaStyles = isTv
@@ -862,16 +895,26 @@ export const MovieCard: React.FC<MovieCardProps> = ({
                                 </div>
                             )}
 
-                            {/* 分段倍速打卡流水 */}
+                            {/* 实际观影时长（常驻：电影与电视剧均显示，缺失时实时兜底） */}
+                            <div className="bg-slate-950/40 p-4 rounded-xl border border-slate-800">
+                                <div className="flex items-center justify-between gap-2">
+                                    <span className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                                        <Clock size={13} className="text-emerald-400" /> 实际观影时长
+                                    </span>
+                                    <span className="text-emerald-400 font-bold text-sm sm:text-base whitespace-nowrap">
+                                        {actualWatchTimeText}
+                                    </span>
+                                </div>
+                                {actualWatchTimeBasis && (
+                                    <p className="mt-1.5 text-[11px] text-slate-500">{actualWatchTimeBasis}</p>
+                                )}
+                            </div>
+
+                            {/* 分段倍速打卡流水明细（仅多段倍速时展示） */}
                             {isTv && speedSegments.length > 1 && (
                                 <div className="bg-slate-950/40 p-4 rounded-xl border border-slate-800">
-                                    <div className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2.5 flex items-center justify-between">
-                                        <span className="flex items-center gap-1.5">
-                                            <Clock size={13} className="text-fuchsia-400" /> 分段倍速流水 ({speedSegments.length} 段)
-                                        </span>
-                                        <span className="text-xs text-emerald-400 font-medium">
-                                            实际观影: {movie.actualWatchTime ? `${Math.floor(movie.actualWatchTime / 60)}小时${movie.actualWatchTime % 60}分` : `${movie.duration || 0}分钟`}
-                                        </span>
+                                    <div className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2.5 flex items-center gap-1.5">
+                                        <Clock size={13} className="text-fuchsia-400" /> 分段倍速流水 ({speedSegments.length} 段)
                                     </div>
                                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                                         {speedSegments.map((seg, idx) => (
